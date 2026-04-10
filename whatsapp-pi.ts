@@ -4,13 +4,35 @@ import { WhatsAppService } from './src/services/whatsapp.service.js';
 import { MenuHandler } from './src/ui/menu.handler.js';
 
 export default function(pi: ExtensionAPI) {
+    // Register verbose flag
+    pi.registerFlag("v", {
+        description: "Enable verbose mode (show Baileys trace logs)",
+        type: "boolean",
+        default: false
+    });
+    pi.registerFlag("verbose", {
+        description: "Enable verbose mode (show Baileys trace logs)",
+        type: "boolean",
+        default: false
+    });
+
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const menuHandler = new MenuHandler(whatsappService, sessionManager);
 
     // Initial status setup
     pi.on("session_start", async (_event, ctx) => {
-        ctx.ui.setStatus('whatsapp', 'WhatsApp: Disconnected');
+        // Check verbose mode
+        const verboseShort = pi.getFlag("v") as boolean;
+        const verboseLong = pi.getFlag("verbose") as boolean;
+        const isVerbose = verboseShort || verboseLong;
+        
+        whatsappService.setVerboseMode(isVerbose);
+        
+        if (isVerbose) {
+            console.log('[WhatsApp-Pi] Verbose mode enabled - Baileys trace logs will be shown');
+        }
+        ctx.ui.setStatus('whatsapp', '|  WhatsApp: Disconnected');
         whatsappService.setStatusCallback((status) => {
             ctx.ui.setStatus('whatsapp', status);
         });

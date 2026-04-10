@@ -35,8 +35,10 @@ export class MenuHandler {
         switch (choice) {
             case 'Connect WhatsApp':
                 this.whatsappService.setQRCodeCallback((qr) => {
-                    ctx.ui.notify('Scan the QR code in the terminal', 'info');
+                    console.log('\n\n=== WhatsApp QR Code ===');
+                    console.log('Scan this QR code with WhatsApp on your phone:\n');
                     qrcode.generate(qr, { small: true });
+                    console.log('\n');
                 });
                 await this.whatsappService.start();
                 ctx.ui.notify('WhatsApp Connection Started', 'info');

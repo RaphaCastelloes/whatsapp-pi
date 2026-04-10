@@ -9,6 +9,8 @@ Auto-generated from all feature plans. Last updated: 2026-04-10
 - N/A (memory-based queuing) (003-whatsapp-messaging-refactor)
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk` (004-blocked-numbers-management)
 - `config.json` (Local persistent storage in `.pi-data/`) (004-blocked-numbers-management)
+- TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`, `pino` (005-verbose-mode-support)
+- Memory-based configuration (005-verbose-mode-support)
 
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `qrcode-terminal`, `pi-agent-sdk` (assumed name for Pi extension API) (001-whatsapp-tui-integration)
 
@@ -28,9 +30,9 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 005-verbose-mode-support: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`, `pino`
 - 004-blocked-numbers-management: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`
 - 003-whatsapp-messaging-refactor: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`
-- 002-manual-whatsapp-connection: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `qrcode-terminal`, `pi-agent-sdk`
 
 
 <!-- MANUAL ADDITIONS START -->

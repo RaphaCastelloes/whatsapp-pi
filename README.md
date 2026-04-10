@@ -23,6 +23,13 @@ npm install
 pi -e whatsapp-pi.ts
 ```
 
+For verbose mode (shows Baileys trace logs for debugging):
+```bash
+pi -e whatsapp-pi.ts -v
+# or
+pi -e whatsapp-pi.ts --verbose
+```
+
 3. Use the menu to connect WhatsApp and manage allowed/blocked numbers
 
 ## Commands

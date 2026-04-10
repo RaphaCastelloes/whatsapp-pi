@@ -76,7 +76,9 @@ export class MessageSender {
                 // 4. Backoff before retry
                 if (attempts < maxRetries) {
                     const backoff = Math.pow(2, attempts) * 1000;
-                    console.log(`[MessageSender] Retrying in ${backoff}ms...`);
+                    if (this.whatsappService.isVerbose()) {
+                        console.log(`[MessageSender] Retrying in ${backoff}ms...`);
+                    }
                     await this.sleep(backoff);
                 }
             }
