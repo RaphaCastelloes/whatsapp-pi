@@ -18,6 +18,29 @@ export interface IncomingMessage {
     timestamp: number;
 }
 
+export interface MessageRequest {
+    recipientJid: string;
+    text: string;
+    options?: {
+        maxRetries?: number;
+        priority?: 'high' | 'normal';
+    };
+}
+
+export interface MessageResult {
+    success: boolean;
+    messageId?: string;
+    error?: string;
+    attempts: number;
+}
+
+export class WhatsAppError extends Error {
+    constructor(public code: string, message: string) {
+        super(message);
+        this.name = 'WhatsAppError';
+    }
+}
+
 export function validatePhoneNumber(number: string): boolean {
     return /^\+[1-9]\d{1,14}$/.test(number);
 }

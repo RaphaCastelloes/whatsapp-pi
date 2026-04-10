@@ -5,17 +5,29 @@ import {
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys';
+import P from 'pino';
 import { Boom } from '@hapi/boom';
 import { SessionManager } from './session.manager.js';
-import { WhatsAppSession } from '../models/whatsapp.types.js';
+import { WhatsAppSession, SessionStatus } from '../models/whatsapp.types.js';
+import { MessageSender } from './message.sender.js';
 
 export class WhatsAppService {
     private socket: any;
     private sessionManager: SessionManager;
+    private messageSender: MessageSender;
     private isReconnecting = false;
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
+        this.messageSender = new MessageSender(this);
+    }
+
+    public getStatus(): SessionStatus {
+        return this.sessionManager.getStatus();
+    }
+
+    public getSocket(): any {
+        return this.socket;
     }
 
     async start() {
@@ -42,6 +54,7 @@ export class WhatsAppService {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, console as any),
             },
+            logger: P({ level: 'silent' }),
         });
 
         this.socket.ev.on('creds.update', saveCreds);
@@ -142,11 +155,16 @@ export class WhatsAppService {
     }
 
     async sendMessage(jid: string, text: string) {
-        if (!this.socket) {
-            console.error('WhatsApp socket not initialized - attempting to start...');
-            await this.start();
+        const result = await this.messageSender.send({
+            recipientJid: jid,
+            text: text
+        });
+
+        if (!result.success) {
+            console.error(`Failed to send message to ${jid}: ${result.error}`);
         }
-        await this.socket.sendMessage(jid, { text: `${text} (π)` });
+        
+        return result;
     }
 
     async logout() {
