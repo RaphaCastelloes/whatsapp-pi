@@ -70,7 +70,7 @@ export default function(pi: ExtensionAPI) {
             if (lastJid && text) {
                 try {
                     await whatsappService.sendMessage(lastJid, text);
-                    ctx.ui.notify(`Sent reply to WhatsApp contact`, 'success');
+                    ctx.ui.notify(`Sent reply to WhatsApp contact`, 'info');
                 } catch (error) {
                     ctx.ui.notify(`Failed to send WhatsApp reply`, 'error');
                 }

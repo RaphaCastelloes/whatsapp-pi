@@ -1,4 +1,5 @@
-import makeWASocket, { 
+import { 
+    makeWASocket,
     DisconnectReason, 
     useMultiFileAuthState, 
     fetchLatestBaileysVersion,
@@ -54,13 +55,20 @@ export class WhatsAppService {
 
             if (connection === 'close') {
                 const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+                const errorMessage = lastDisconnect?.error?.message || '';
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
                 console.error(`Connection closed [${statusCode}]. Reconnecting: ${shouldReconnect}`);
                 
+                if (errorMessage.includes('bad-request') || statusCode === 400) {
+                    console.error('Bad request error detected - clearing session and forcing re-auth');
+                    await this.sessionManager.clearSession();
+                    this.sessionManager.setStatus('logged-out');
+                    return;
+                }
+                
                 if (shouldReconnect && !this.isReconnecting) {
                     this.isReconnecting = true;
-                    // Wait 3 seconds before trying to reconnect to avoid conflicts
                     setTimeout(() => {
                         this.isReconnecting = false;
                         this.start();
@@ -83,7 +91,7 @@ export class WhatsAppService {
         
         const msg = m.messages[0];
         if (!msg || !msg.key.remoteJid || msg.key.fromMe) return;
-
+ 
         const sender = msg.key.remoteJid.split('@')[0];
         const fullNumber = '+' + sender; 
         
