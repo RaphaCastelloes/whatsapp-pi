@@ -3,6 +3,7 @@ import { SessionManager } from './src/services/session.manager.js';
 import { WhatsAppService } from './src/services/whatsapp.service.js';
 import { MenuHandler } from './src/ui/menu.handler.js';
 
+console.log("[WhatsApp-Pi] Extension file loaded by Pi...");
 export default function(pi: ExtensionAPI) {
     // Register verbose flag
     pi.registerFlag("v", {
@@ -35,9 +36,9 @@ export default function(pi: ExtensionAPI) {
     // Initial status setup
     pi.on("session_start", async (_event, ctx) => {
         // Check verbose mode
-        const verboseShort = pi.getFlag("-v") as boolean;
-        const verboseLong = pi.getFlag("--verbose") as boolean;
-        const isVerbose = verboseShort || verboseLong;
+        const isVerboseFlagSet = pi.getFlag("v") === true || pi.getFlag("verbose") === true || process.argv.includes("-v") || process.argv.includes("--verbose");
+        
+        const isVerbose = isVerboseFlagSet;
         
         whatsappService.setVerboseMode(isVerbose);
         
@@ -56,17 +57,18 @@ export default function(pi: ExtensionAPI) {
                 if (data.status) await sessionManager.setStatus(data.status);
                 if (data.allowList) {
                     for (const n of data.allowList) {
-                        await sessionManager.addNumber(n);
+                        await sessionManager.addNumber(typeof n === "string" ? n : n.number, typeof n === "string" ? undefined : n.name);
                     }
                 }
             }
         }
 
+        // Check connect flag
+        const isConnectFlagSet = pi.getFlag("c") === true || pi.getFlag("connect") === true || process.argv.includes("-c") || process.argv.includes("--connect");
+        
         // Auto-connect removed to avoid socket conflicts
         if (await sessionManager.isRegistered()) {
-            const connectShort = pi.getFlag("-c") as boolean;
-            const connectLong = pi.getFlag("--connect") as boolean;
-            const shouldConnect = connectShort || connectLong;
+            const shouldConnect = isConnectFlagSet;
 
             if (shouldConnect) {
                 ctx.ui.setStatus('whatsapp', '|  WhatsApp: Auto-connecting...');
@@ -95,7 +97,7 @@ export default function(pi: ExtensionAPI) {
                 // We just ensure state is loaded, but do NOT call whatsappService.start()
                 await sessionManager.setStatus('disconnected');
             }
-        } else if (pi.getFlag("-c") || pi.getFlag("--connect")) {
+        } else if (isConnectFlagSet) {
             ctx.ui.notify('WhatsApp: Auto-connect skipped. Manual login required.', 'info');
         }
     });

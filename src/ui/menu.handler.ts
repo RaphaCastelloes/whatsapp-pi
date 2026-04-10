@@ -35,10 +35,8 @@ export class MenuHandler {
         switch (choice) {
             case 'Connect WhatsApp':
                 this.whatsappService.setQRCodeCallback((qr) => {
-                    console.log('\n\n=== WhatsApp QR Code ===');
-                    console.log('Scan this QR code with WhatsApp on your phone:\n');
+                    ctx.ui.notify('Scan the QR code in the terminal', 'info');
                     qrcode.generate(qr, { small: true });
-                    console.log('\n');
                 });
                 await this.whatsappService.start();
                 ctx.ui.notify('WhatsApp Connection Started', 'info');
@@ -65,67 +63,72 @@ export class MenuHandler {
 
     private async manageAllowList(ctx: ExtensionCommandContext) {
         const list = this.sessionManager.getAllowList();
-        const displayList = list.map(c => c.name ? `${c.name} (${c.number})` : c.number);
-        const options = [...displayList.map(d => `Remove ${d}`), 'Add Number', 'Back'];
+        // Exibe o nome se existir, senão apenas o número
+        const options = [...list.map(c => `Remove ${c.name ? c.name + ' (' + c.number + ')' : c.number}`), 'Add Number', 'Back'];
         
         const choice = await ctx.ui.select('Allowed Numbers', options);
 
         if (choice === 'Add Number') {
             const num = await ctx.ui.input('Enter number (e.g. +5511999999999):');
             if (num && validatePhoneNumber(num)) {
-                const name = await ctx.ui.input('Enter name (optional, press Enter to skip):');
-                await this.sessionManager.addNumber(num, name || undefined);
-                const display = name ? `${name} (${num})` : num;
-                ctx.ui.notify(`Added ${display}`, 'info');
+                await this.sessionManager.addNumber(num);
+                ctx.ui.notify(`Added ${num}`, 'info');
             } else {
                 ctx.ui.notify('Invalid number format', 'error');
             }
             await this.manageAllowList(ctx);
         } else if (choice?.startsWith('Remove ')) {
-            const display = choice.replace('Remove ', '');
-            // Extract number from display (could be "Name (number)" or just "number")
-            const match = display.match(/\(([+\d]+)\)$/);
-            const num = match ? match[1] : display;
+            // Extrai o número entre parênteses ou o que sobrar depois de "Remove "
+            let num = choice.replace('Remove ', '');
+            if (num.includes('(')) {
+                const match = num.match(/\((.*?)\)/);
+                if (match) num = match[1];
+            }
             await this.sessionManager.removeNumber(num);
-            ctx.ui.notify(`Removed ${display}`, 'info');
+            ctx.ui.notify(`Removed ${num}`, 'info');
             await this.manageAllowList(ctx);
         }
     }
 
     private async manageBlockList(ctx: ExtensionCommandContext) {
-        const ignoredList = this.sessionManager.getIgnoredNumbers();
+        const list = this.sessionManager.getBlockList();
         
-        if (ignoredList.length === 0) {
-            ctx.ui.notify('No ignored numbers (all messages are from allowed contacts)', 'info');
+        if (list.length === 0) {
+            ctx.ui.notify('No blocked numbers', 'info');
             await this.handleCommand(ctx);
             return;
         }
 
-        const displayList = ignoredList.map(c => c.name ? `${c.name} (${c.number})` : c.number);
-        const options = [...displayList, 'Back'];
-        
-        const choice = await ctx.ui.select('Blocked Numbers (Not in Allow List)', options);
+        const options = [...list.map(c => c.name ? `${c.name} (${c.number})` : c.number), 'Back'];
+        const choice = await ctx.ui.select('Blocked Numbers (Select to Manage)', options);
 
-        if (choice === 'Back') {
+        if (choice && choice !== 'Back') {
+            let num = choice;
+            if (num.includes('(')) {
+                const match = num.match(/\((.*?)\)/);
+                if (match) num = match[1];
+            }
+            await this.manageBlockedNumber(ctx, num);
+        } else {
             await this.handleCommand(ctx);
-        } else if (choice) {
-            // Extract number from display
-            const match = choice.match(/\(([+\d]+)\)$/);
-            const num = match ? match[1] : choice;
-            await this.manageBlockedNumber(ctx, num, choice);
         }
     }
 
-    private async manageBlockedNumber(ctx: ExtensionCommandContext, number: string, display: string) {
-        const action = await ctx.ui.select(`Manage ${display}`, ['Allow', 'Back']);
+    private async manageBlockedNumber(ctx: ExtensionCommandContext, number: string) {
+        const action = await ctx.ui.select(`Manage ${number}`, ['Unblock and Allow', 'Delete', 'Back']);
 
-        if (action === 'Allow') {
-            const ok = await ctx.ui.confirm('Allow', `Add ${display} to Allowed Numbers?`);
+        if (action === 'Unblock and Allow') {
+            const ok = await ctx.ui.confirm('Unblock', `Move ${number} to Allowed Numbers?`);
             if (ok) {
-                // Get the name from ignored list
-                const ignored = this.sessionManager.getIgnoredNumbers().find(c => c.number === number);
-                await this.sessionManager.addNumber(number, ignored?.name);
-                ctx.ui.notify(`${display} added to Allowed List`, 'info');
+                await this.sessionManager.unblockAndAllow(number);
+                ctx.ui.notify(`${number} moved to Allowed List`, 'info');
+            }
+            await this.manageBlockList(ctx);
+        } else if (action === 'Delete') {
+            const ok = await ctx.ui.confirm('Delete', `Remove ${number} from Block List?`);
+            if (ok) {
+                await this.sessionManager.unblockNumber(number);
+                ctx.ui.notify(`${number} removed from Block List`, 'info');
             }
             await this.manageBlockList(ctx);
         } else {
