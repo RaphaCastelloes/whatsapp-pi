@@ -118,7 +118,7 @@ export class WhatsAppService {
         
         // Ignore messages sent by Pi (marked with π)
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        if (text.endsWith('(π)')) return;
+        if (text.endsWith('π')) return;
         
 
         const sender = msg.key.remoteJid.split('@')[0];

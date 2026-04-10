@@ -1,3 +1,4 @@
 {
-  "permissionLevel": "high"
+  "permissionLevel": "minimal",
+  "permissionMode": "block"
 }

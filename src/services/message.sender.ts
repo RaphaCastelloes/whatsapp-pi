@@ -54,9 +54,9 @@ export class MessageSender {
                 }
 
                 // 3. Send the message
-                // Note: Branding (π) is applied here to ensure consistency
+                // Note: Branding π is applied here to ensure consistency
                 const response = await socket.sendMessage(request.recipientJid, { 
-                    text: `${request.text} (π)` 
+                    text: `${request.text} π` 
                 });
 
                 return {
