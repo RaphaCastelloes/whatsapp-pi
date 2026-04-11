@@ -183,15 +183,16 @@ export class WhatsAppService {
     }
 
     async sendMessage(jid: string, text: string) {
-        // Show typing indicator before sending
+        // Ensure we show the typing indicator before sending
         await this.sendPresence(jid, 'composing');
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await this.sendPresence(jid, 'paused');
 
         const result = await this.messageSender.send({
             recipientJid: jid,
             text: text
         });
+
+        // After sending, we can stop the typing indicator
+        await this.sendPresence(jid, 'paused');
 
         if (!result.success) {
             console.error(`Failed to send message to ${jid}: ${result.error}`);
