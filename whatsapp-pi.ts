@@ -64,6 +64,9 @@ export default function(pi: ExtensionAPI) {
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
         
+        const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
+        const pushName = msg.pushName || "WhatsApp User";
+
         // Handle media types
         if (!text) {
             if (msg.message.imageMessage) text = "[Image]";
@@ -76,12 +79,11 @@ export default function(pi: ExtensionAPI) {
             else text = "[Unsupported Message Type]";
         }
 
-        const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
-        const pushName = msg.pushName || "WhatsApp User";
+        // Always log to console so it appears in the TUI log pane
+        console.log(`[WhatsApp-Pi] ${pushName} (+${sender}): ${text}`);
 
-        pi.sendUserMessage(`[WhatsApp Message from ${pushName} (+${sender})]: ${text}`, { 
-            deliverAs: "followUp" 
-        });
+        // Use a standard delivery to see if it improves TUI visibility
+        pi.sendUserMessage(`Mensagem de ${pushName} (+${sender}): ${text}`);
     });
 
     // Register the command
