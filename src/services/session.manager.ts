@@ -34,16 +34,25 @@ export class SessionManager {
         try {
             const data = await readFile(this.configPath, 'utf-8');
             const config = JSON.parse(data);
-            // Migrate old string arrays to Contact objects
-            this.allowList = (config.allowList || []).map((item: any) => 
-                typeof item === 'string' ? { number: item } : item
-            );
-            this.blockList = (config.blockList || []).map((item: any) => 
-                typeof item === 'string' ? { number: item } : item
-            );
-            this.ignoredNumbers = (config.ignoredNumbers || []).map((item: any) => 
-                typeof item === 'string' ? { number: item } : item
-            );
+            
+            const cleanContact = (item: any): Contact | null => {
+                if (typeof item === 'string') return { number: item };
+                if (item && typeof item === 'object') {
+                    let num = item.number;
+                    // Unroll nested objects if any
+                    while (num && typeof num === 'object' && num.number) {
+                        num = num.number;
+                    }
+                    if (typeof num === 'string') {
+                        return { number: num, name: item.name };
+                    }
+                }
+                return null;
+            };
+
+            this.allowList = (config.allowList || []).map(cleanContact).filter(Boolean) as Contact[];
+            this.blockList = (config.blockList || []).map(cleanContact).filter(Boolean) as Contact[];
+            this.ignoredNumbers = (config.ignoredNumbers || []).map(cleanContact).filter(Boolean) as Contact[];
             this.status = config.status || 'logged-out';
         } catch (error) {
             // File not found is fine
@@ -76,12 +85,23 @@ export class SessionManager {
         return this.ignoredNumbers;
     }
 
-    async addNumber(number: string, name?: string) {
-        if (!this.allowList.find(c => c.number === number)) {
-            this.allowList.push({ number, name });
+    async addNumber(number: any, name?: string) {
+        // Handle potential nested objects from legacy bugs
+        let cleanNumber = number;
+        while (cleanNumber && typeof cleanNumber === 'object' && cleanNumber.number) {
+            cleanNumber = cleanNumber.number;
+        }
+
+        if (typeof cleanNumber !== 'string') {
+            console.warn('[SessionManager] Attempted to add invalid number:', cleanNumber);
+            return;
+        }
+
+        if (!this.allowList.find(c => c.number === cleanNumber)) {
+            this.allowList.push({ number: cleanNumber, name });
             // Remove from blockList and ignoredNumbers if it was there
-            this.blockList = this.blockList.filter(c => c.number !== number);
-            this.ignoredNumbers = this.ignoredNumbers.filter(c => c.number !== number);
+            this.blockList = this.blockList.filter(c => c.number !== cleanNumber);
+            this.ignoredNumbers = this.ignoredNumbers.filter(c => c.number !== cleanNumber);
             await this.saveConfig();
         }
     }

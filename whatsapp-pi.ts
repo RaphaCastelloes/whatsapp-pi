@@ -57,7 +57,9 @@ export default function(pi: ExtensionAPI) {
                 if (data.status) await sessionManager.setStatus(data.status);
                 if (data.allowList) {
                     for (const n of data.allowList) {
-                        await sessionManager.addNumber(typeof n === "string" ? n : n.number, typeof n === "string" ? undefined : n.name);
+                        const num = typeof n === "string" ? n : n.number;
+                        const name = typeof n === "string" ? undefined : n.name;
+                        await sessionManager.addNumber(num, name);
                     }
                 }
             }

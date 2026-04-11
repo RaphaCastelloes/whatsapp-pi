@@ -28,7 +28,7 @@ export class MenuHandler {
         
         options.push('Allow Numbers');
         options.push('Blocked Numbers');
-        options.push('Exit');
+        options.push('Back');
 
         const choice = await ctx.ui.select(`WhatsApp (Status: ${status})`, options);
 
