@@ -7,25 +7,14 @@ import { AudioService } from './src/services/audio.service.js';
 console.log("[WhatsApp-Pi] Extension file loaded by Pi...");
 export default function (pi: ExtensionAPI) {
     // Register verbose flag
-    pi.registerFlag("v", {
-        description: "Enable verbose mode (show Baileys trace logs)",
-        type: "boolean",
-        default: false
-    });
     pi.registerFlag("verbose", {
         description: "Enable verbose mode (show Baileys trace logs)",
         type: "boolean",
         default: false
     });
-    
-    // Register whatsapp flags
-    pi.registerFlag("w", {
-        description: "Auto-connect to WhatsApp on startup",
-        type: "boolean",
-        default: false
-    });
-    pi.registerFlag("whatsapp", {
-        description: "Auto-connect to WhatsApp on startup",
+
+    pi.registerFlag("whatsapp-pi-off", {
+        description: "Disable WhatsApp-Pi on startup",
         type: "boolean",
         default: false
     });
@@ -40,11 +29,11 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_start", async (_event, ctx) => {
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
-        
+
         const isVerbose = isVerboseFlagSet;
-        
+
         whatsappService.setVerboseMode(isVerbose);
-        
+
         if (isVerbose) {
             console.log('[WhatsApp-Pi] Verbose mode enabled - Baileys trace logs will be shown');
         }
@@ -53,7 +42,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.setStatus('whatsapp', status);
         });
         await sessionManager.ensureInitialized();
-        
+
         for (const entry of ctx.sessionManager.getEntries()) {
             if (entry.type === "custom" && entry.customType === "whatsapp-state") {
                 const data = entry.data as any;
@@ -69,19 +58,19 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Check whatsapp flag
-        const isConnectFlagSet = process.argv.includes("--whatsapp");
-        
+        const isWhatsappPiOff = process.argv.includes("--whatsapp-pi-off");
+
         // Auto-connect removed to avoid socket conflicts
         if (await sessionManager.isRegistered()) {
-            const shouldConnect = isConnectFlagSet;
+            const shouldConnect = !isWhatsappPiOff;
 
             if (shouldConnect) {
                 ctx.ui.setStatus('whatsapp', '|  WhatsApp: Auto-connecting...');
-                
+
                 // Retry logic (max 3 attempts, 3s delay)
                 let attempts = 0;
                 const maxAttempts = 4; // Initial + 3 retries
-                
+
                 const tryConnect = async () => {
                     attempts++;
                     try {
@@ -102,8 +91,8 @@ export default function (pi: ExtensionAPI) {
                 // We just ensure state is loaded, but do NOT call whatsappService.start()
                 await sessionManager.setStatus('disconnected');
             }
-        } else if (isConnectFlagSet) {
-            ctx.ui.notify('WhatsApp: Auto-connect skipped. Manual login required.', 'info');
+        } else {
+            ctx.ui.notify('WhatsApp: Manual login required via /whatsapp.', 'info');
         }
 
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
@@ -117,7 +106,7 @@ export default function (pi: ExtensionAPI) {
         if (!msg.message) return;
 
         let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        
+
         const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
@@ -149,12 +138,12 @@ export default function (pi: ExtensionAPI) {
         // Handle commands
         if (text.trim().toLowerCase().startsWith('/new')) {
             console.log(`[WhatsApp-Pi] Session reset requested by ${pushName}. Clearing context...`);
-            
-            await whatsappService.sendMessage(remoteJid!, "Iniciando nova sessão... 🆕\nO contexto anterior foi limpo.");
+
             if (lastCommandCtx) {
                 await lastCommandCtx.newSession();
+                await whatsappService.sendMessage(remoteJid!, "Sessão iniciada com sucesso! ✅");
             } else {
-                pi.sendUserMessage("Use /whatsapp in Pi TUI to activate /new in whatsapp", { deliverAs: "followUp" });
+                pi.sendUserMessage("Use /whatsapp no Pi TUI para ativar o comando /new no whatsapp.", { deliverAs: "followUp" });
             }
             return;
         }
@@ -169,7 +158,7 @@ export default function (pi: ExtensionAPI) {
         handler: async (args, ctx) => {
             lastCommandCtx = ctx;
             await menuHandler.handleCommand(ctx);
-            
+
             // Persist state after changes
             pi.appendEntry("whatsapp-state", {
                 status: sessionManager.getStatus(),
