@@ -26,7 +26,6 @@ export class MenuHandler {
 
         if (registered) {
             options.push('Logoff (Delete Session)');
-            options.push('Reset Conversation');
         }
 
         options.push('Allowed Numbers');
@@ -52,12 +51,6 @@ export class MenuHandler {
                 if (confirmLogoff) {
                     await this.whatsappService.logout();
                     ctx.ui.notify('Logged off and credentials deleted', 'info');
-                }
-                break;
-            case 'Reset Conversation':
-                const confirmReset = await ctx.ui.confirm('Reset', 'Clear all conversation history?');
-                if (confirmReset) {
-                    await ctx.newSession();
                 }
                 break;
             case 'Allowed Numbers':

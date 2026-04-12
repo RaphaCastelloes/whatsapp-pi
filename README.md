@@ -71,7 +71,6 @@ pi -e whatsapp-pi.ts --verbose
 - **Connect WhatsApp** - Start WhatsApp connection (shows QR code for first-time setup)
 - **Disconnect WhatsApp** - Stop WhatsApp connection
 - **Logoff (Delete Session)** - Remove all credentials and session data
-- **Reset Conversation** - Clear all conversation history
 - **Allowed Numbers** - Manage contacts that can interact with Pi
 - **Blocked Numbers** - View ignored numbers and manage them
 

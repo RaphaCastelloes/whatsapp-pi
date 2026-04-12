@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-pi",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "type": "module",
   "description": "WhatsApp integration extension for Pi",
   "main": "whatsapp-pi.ts",
