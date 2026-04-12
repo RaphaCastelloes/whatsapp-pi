@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" alt="WhatsApp Logo" width="100">
+</p>
+
 # WhatsApp-Pi
 
-WhatsApp integration for Pi coding agent with message filtering, blocking, and reliable message delivery.
+A WhatsApp integration extension for the **[Pi Coding Agent](https://github.com/mariozechner/pi-coding-agent)**. 
+
+Pi is a powerful agentic AI coding assistant that operates in your terminal. This extension allows you to chat and pair-program with your Pi agent directly through WhatsApp, featuring message filtering, allow-listing, and reliable message delivery.
 
 ## Features
 
@@ -12,6 +18,29 @@ WhatsApp integration for Pi coding agent with message filtering, blocking, and r
 - **TUI Integration**: Menu-driven interface for managing connections and contacts
 
 ## Quick Start
+
+1. Install the extension:
+```bash
+pi install npm:whatsapp-pi
+```
+
+2. Start Pi (the extension will load automatically once installed):
+```bash
+pi
+```
+
+To automatically connect to WhatsApp on startup (if you are already authenticated):
+```bash
+pi -w
+# or
+pi --whatsapp
+```
+
+3. Use the menu to connect WhatsApp and manage allowed/blocked numbers
+
+## Development / Testing
+
+If you are developing or testing the extension locally:
 
 1. Install dependencies:
 ```bash
@@ -29,8 +58,6 @@ pi -e whatsapp-pi.ts -v
 # or
 pi -e whatsapp-pi.ts --verbose
 ```
-
-3. Use the menu to connect WhatsApp and manage allowed/blocked numbers
 
 ## Commands
 
