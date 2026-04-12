@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { SessionManager } from './src/services/session.manager.js';
 import { WhatsAppService } from './src/services/whatsapp.service.js';
 import { MenuHandler } from './src/ui/menu.handler.js';
@@ -104,7 +104,11 @@ export default function(pi: ExtensionAPI) {
         } else if (isConnectFlagSet) {
             ctx.ui.notify('WhatsApp: Auto-connect skipped. Manual login required.', 'info');
         }
+        
+        ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
     });
+
+    let lastCommandCtx: ExtensionCommandContext | undefined;
 
     // Handle incoming messages by injecting them as user prompts
     whatsappService.setMessageCallback(async (m) => {
@@ -142,25 +146,52 @@ export default function(pi: ExtensionAPI) {
         console.log(`[WhatsApp-Pi] ${pushName} (+${sender}): ${text}`);
 
         // Handle commands
-        const cmd = text.trim().toLowerCase();
-        if (cmd === '/new') {
+        if (text.trim().toLowerCase().startsWith('/new')) {
             console.log(`[WhatsApp-Pi] Session reset requested by ${pushName}. Clearing context...`);
             
             await whatsappService.sendMessage(remoteJid!, "Iniciando nova sessão... 🆕\nO contexto anterior foi limpo.");
-            
-            // Trigger built-in new command to clear context without exiting
-            pi.sendUserMessage("/new");
+            if (lastCommandCtx) {
+                await lastCommandCtx.newSession();
+            } else {
+                // Trigger the internal reset command to get a CommandContext
+                pi.sendUserMessage("/whatsapp-internal-reset");
+            }
             return;
         }
 
-        // Use a standard delivery to see if it improves TUI visibility
+        // Use a standard delivery for ALL messages to ensure TUI consistency
         pi.sendUserMessage(`Mensagem de ${pushName} (+${sender}): ${text}`);
+    });
+
+    // Internal command to trigger a real new session when we don't have a lastCommandCtx
+    pi.registerCommand("whatsapp-internal-reset", {
+        description: "Internal WhatsApp session reset",
+        handler: async (_args, ctx) => {
+            lastCommandCtx = ctx;
+            await ctx.newSession();
+        }
+    });
+
+    // Handle the /new command from within the extension to ensure it clears the context
+    pi.on("input", async (event, _ctx) => {
+        if (event.source === "extension") {
+            const match = event.text.match(/^Mensagem de .* \(\+\d+\): (\/new.*)$/i);
+            if (match) {
+                if (lastCommandCtx) {
+                    await lastCommandCtx.newSession();
+                } else {
+                    pi.sendUserMessage("/whatsapp-internal-reset");
+                }
+                return { action: "handled" };
+            }
+        }
     });
 
     // Register commands
     pi.registerCommand("whatsapp", {
         description: "Manage WhatsApp integration",
         handler: async (args, ctx) => {
+            lastCommandCtx = ctx;
             await menuHandler.handleCommand(ctx);
             
             // Persist state after changes
