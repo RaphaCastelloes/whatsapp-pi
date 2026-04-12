@@ -62,7 +62,8 @@
             "runtimeArgs": [
                 "-e",
                 "${workspaceFolder}\\whatsapp-pi.ts",
-                "--whatsapp-pi-online"
+                "--whatsapp-pi-online",
+                "-c"
             ],
             "console": "integratedTerminal",
             "outputCapture": "std"

@@ -120,13 +120,38 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Handle media types
+        let imageBuffer: Buffer | undefined;
+        let imageMimeType: string | undefined;
+
         if (msg.message.audioMessage) {
             console.log(`[WhatsApp-Pi] Transcribing audio from ${pushName}...`);
             const transcription = await audioService.transcribe(msg.message.audioMessage);
             text = `[Áudio Transcrito]: ${transcription}`;
+        } else if (msg.message.imageMessage) {
+            console.log(`[WhatsApp-Pi] Downloading image from ${pushName}...`);
+            try {
+                const { downloadContentFromMessage } = await import('@whiskeysockets/baileys');
+                const stream = await downloadContentFromMessage(msg.message.imageMessage, 'image');
+                let buffer = Buffer.from([]);
+                for await (const chunk of stream) {
+                    buffer = Buffer.concat([buffer, chunk]);
+                }
+                imageBuffer = buffer;
+                
+                // Normalize mime type for Cloud Code Assist / Gemini
+                let rawMime = msg.message.imageMessage.mimetype || 'image/jpeg';
+                imageMimeType = rawMime.toLowerCase().split(';')[0].trim();
+                if (imageMimeType === 'image/jpg') imageMimeType = 'image/jpeg';
+                
+                console.log(`[WhatsApp-Pi] Image downloaded. MIME: ${imageMimeType} (original: ${rawMime}), Size: ${imageBuffer.length} bytes`);
+                
+                text = msg.message.imageMessage.caption || "[Image]";
+            } catch (e) {
+                console.error(`[WhatsApp-Pi] Failed to download image:`, e);
+                text = "[Image (download failed)]";
+            }
         } else if (!text) {
-            if (msg.message.imageMessage) text = "[Image]";
-            else if (msg.message.videoMessage) text = "[Video]";
+            if (msg.message.videoMessage) text = "[Video]";
             else if (msg.message.stickerMessage) text = "[Sticker]";
             else if (msg.message.documentMessage) text = "[Document]";
             else if (msg.message.contactMessage || msg.message.contactsArrayMessage) text = "[Contact]";
@@ -136,6 +161,57 @@ export default function (pi: ExtensionAPI) {
 
         // Always log to console so it appears in the TUI log pane
         console.log(`[WhatsApp-Pi] ${pushName} (+${sender}): ${text}`);
+
+        // Handle image with dedicated vision model if configured
+        if (imageBuffer && imageMimeType && sessionManager.getOpenaiKey()) {
+            console.log(`[WhatsApp-Pi] Using dedicated vision model (${sessionManager.getVisionModel()}) for image analysis...`);
+            try {
+                const openAiKey = sessionManager.getOpenaiKey();
+                const visionModel = sessionManager.getVisionModel();
+                
+                const response = await fetch("https://api.openai.com/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${openAiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: visionModel,
+                        messages: [
+                            {
+                                role: "user",
+                                content: [
+                                    { type: "text", text: "Descreva esta imagem em detalhes. Se houver texto, transcreva-o." },
+                                    {
+                                        type: "image_url",
+                                        image_url: {
+                                            url: `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens: 500
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json() as any;
+                    const description = data.choices[0].message.content;
+                    text = `${text}\n\n[Análise da Imagem por ${visionModel}]:\n${description}`;
+                    // Clear buffer/mime so we don't send the image again to Pi
+                    imageBuffer = undefined;
+                    imageMimeType = undefined;
+                } else {
+                    const error = await response.text();
+                    console.error(`[WhatsApp-Pi] OpenAI Vision API error:`, error);
+                    text = `${text}\n\n[Erro na análise da imagem: API retornou ${response.status}]`;
+                }
+            } catch (e) {
+                console.error(`[WhatsApp-Pi] Failed to analyze image with OpenAI:`, e);
+                text = `${text}\n\n[Erro ao processar imagem com OpenAI]`;
+            }
+        }
 
         // Handle commands
         if (text.trim().toLowerCase().startsWith('/compact')) {
@@ -158,7 +234,14 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Use a standard delivery for ALL messages to ensure TUI consistency
-        pi.sendUserMessage(`Mensagem de ${pushName} (+${sender}): ${text}`, { deliverAs: "followUp" });
+        if (imageBuffer && imageMimeType) {
+            pi.sendUserMessage([
+                { type: "text", text: `Mensagem de ${pushName} (+${sender}): ${text}` },
+                { type: "image", source: { type: "base64", mediaType: imageMimeType as any, data: imageBuffer.toString('base64') } }
+            ], { deliverAs: "followUp" });
+        } else {
+            pi.sendUserMessage(`Mensagem de ${pushName} (+${sender}): ${text}`, { deliverAs: "followUp" });
+        }
     });
 
     // Register commands

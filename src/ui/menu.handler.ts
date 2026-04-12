@@ -31,6 +31,7 @@ export class MenuHandler {
 
         options.push('Allowed Numbers');
         options.push('Blocked Numbers');
+        options.push('Vision Settings');
         options.push('Back');
 
         const choice = await ctx.ui.select(`WhatsApp (Status: ${status})`, options);
@@ -65,6 +66,9 @@ export class MenuHandler {
                 break;
             case 'Blocked Numbers':
                 await this.manageBlockList(ctx);
+                break;
+            case 'Vision Settings':
+                await this.manageVisionSettings(ctx);
                 break;
         }
     }
@@ -156,6 +160,35 @@ export class MenuHandler {
             await this.manageBlockList(ctx);
         } else {
             await this.manageBlockList(ctx);
+        }
+    }
+
+    private async manageVisionSettings(ctx: ExtensionCommandContext) {
+        const key = this.sessionManager.getOpenaiKey();
+        const model = this.sessionManager.getVisionModel();
+
+        const options = [
+            `API Key: ${key ? '********' : '(Not Set)'}`,
+            `Vision Model: ${model}`,
+            'Back'
+        ];
+
+        const choice = await ctx.ui.select('Vision Settings', options);
+
+        if (choice?.startsWith('API Key:')) {
+            const newKey = await ctx.ui.input('Enter OpenAI API Key (leave empty to clear):');
+            await this.sessionManager.setOpenaiKey(newKey || '');
+            ctx.ui.notify('OpenAI Key updated', 'success');
+            await this.manageVisionSettings(ctx);
+        } else if (choice?.startsWith('Vision Model:')) {
+            const newModel = await ctx.ui.input('Enter Vision Model (e.g., gpt-4o, gpt-4o-mini):', { defaultValue: model });
+            if (newModel) {
+                await this.sessionManager.setVisionModel(newModel);
+                ctx.ui.notify('Vision model updated', 'success');
+            }
+            await this.manageVisionSettings(ctx);
+        } else {
+            await this.handleCommand(ctx);
         }
     }
 }

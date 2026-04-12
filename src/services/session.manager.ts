@@ -21,6 +21,8 @@ export class SessionManager {
     private allowList: Contact[] = [];
     private blockList: Contact[] = [];
     private ignoredNumbers: Contact[] = [];
+    private openaiKey: string = '';
+    private visionModel: string = 'gpt-4o';
 
     public async ensureInitialized() {
         try {
@@ -54,6 +56,8 @@ export class SessionManager {
             this.blockList = (config.blockList || []).map(cleanContact).filter(Boolean) as Contact[];
             this.ignoredNumbers = (config.ignoredNumbers || []).map(cleanContact).filter(Boolean) as Contact[];
             this.status = config.status || 'logged-out';
+            this.openaiKey = config.openaiKey || '';
+            this.visionModel = config.visionModel || 'gpt-4o';
         } catch (error) {
             // File not found is fine
         }
@@ -65,7 +69,9 @@ export class SessionManager {
                 allowList: this.allowList,
                 blockList: this.blockList,
                 ignoredNumbers: this.ignoredNumbers,
-                status: this.status
+                status: this.status,
+                openaiKey: this.openaiKey,
+                visionModel: this.visionModel
             };
             await writeFile(this.configPath, JSON.stringify(config, null, 2));
         } catch (error) {
@@ -192,6 +198,24 @@ export class SessionManager {
 
     async setStatus(status: SessionStatus) {
         this.status = status;
+        await this.saveConfig();
+    }
+
+    getOpenaiKey(): string {
+        return this.openaiKey;
+    }
+
+    async setOpenaiKey(key: string) {
+        this.openaiKey = key;
+        await this.saveConfig();
+    }
+
+    getVisionModel(): string {
+        return this.visionModel;
+    }
+
+    async setVisionModel(model: string) {
+        this.visionModel = model;
         await this.saveConfig();
     }
 
