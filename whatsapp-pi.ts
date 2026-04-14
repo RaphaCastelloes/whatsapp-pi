@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
         if (isVerbose) {
             console.log('[WhatsApp-Pi] Verbose mode enabled - Baileys trace logs will be shown');
         }
-        ctx.ui.setStatus('whatsapp', 'WhatsApp: Disconnected');
+        ctx.ui.setStatus('whatsapp', '| WhatsApp: Disconnected');
         whatsappService.setStatusCallback((status) => {
             ctx.ui.setStatus('whatsapp', status);
         });
@@ -69,7 +69,7 @@ export default function (pi: ExtensionAPI) {
             const shouldConnect = isWhatsappPiOn;
 
             if (shouldConnect) {
-                ctx.ui.setStatus('whatsapp', 'WhatsApp: Auto-connecting...');
+                ctx.ui.setStatus('whatsapp', '| WhatsApp: Auto-connecting...');
 
                 // Retry logic (max 3 attempts, 3s delay)
                 let attempts = 0;
@@ -85,7 +85,7 @@ export default function (pi: ExtensionAPI) {
                             setTimeout(tryConnect, 3000);
                         } else {
                             ctx.ui.notify('WhatsApp: Auto-connect failed after multiple attempts.', 'error');
-                            ctx.ui.setStatus('whatsapp', 'WhatsApp: Connection Failed');
+                            ctx.ui.setStatus('whatsapp', '|  WhatsApp: Connection Failed');
                         }
                     }
                 };
@@ -219,16 +219,16 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Always log to console so it appears in the TUI log pane
-        console.log(`[WhatsApp-Pi] ${pushName} (+${sender}): ${text}`);
+        console.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${text}`);
 
         // Use a standard delivery for ALL messages to ensure TUI consistency
         if (imageBuffer && imageMimeType) {
             pi.sendUserMessage([
-                { type: "text", text: `Message from ${pushName} (+${sender}): ${text}` },
+                { type: "text", text: `Message from ${pushName} (${sender}): ${text}` },
                 { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
             ], { deliverAs: "followUp" });
         } else {
-            pi.sendUserMessage(`Message from ${pushName} (+${sender}): ${text}`, { deliverAs: "followUp" });
+            pi.sendUserMessage(`Message from ${pushName} (${sender}): ${text}`, { deliverAs: "followUp" });
         }
 
         // Handle commands

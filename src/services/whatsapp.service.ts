@@ -140,25 +140,23 @@ export class WhatsAppService {
         // Ignore messages sent by Pi (marked with π)
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
         if (text.endsWith('π')) return;
-        
 
-        const sender = msg.key.remoteJid.split('@')[0];
-        const fullNumber = '+' + sender; 
+        const senderJid = msg.key.remoteJid.split('@')[0];
         
-        if (this.sessionManager.isBlocked(fullNumber)) {
+        if (this.sessionManager.isBlocked(senderJid)) {
             if (this.isVerbose()) {
-                console.log(`Ignoring message from ${fullNumber} (explicitly blocked)`);
+                console.log(`Ignoring message from ${senderJid} (explicitly blocked)`);
             }
             return;
         }
 
-        if (!this.sessionManager.isAllowed(fullNumber)) {
+        if (!this.sessionManager.isAllowed(senderJid)) {
             if (this.isVerbose()) {
-                console.log(`Ignoring message from ${fullNumber} (not in allow list)`);
+                console.log(`Ignoring message from ${senderJid} (not in allow list)`);
             }
             // Track this number as ignored so user can allow it later
             const pushName = msg.pushName || undefined;
-            await this.sessionManager.trackIgnoredNumber(fullNumber, pushName);
+            await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
             return;
         }
 
