@@ -14,6 +14,11 @@ Thumbs.db
 
 # IDE
 .idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.swp
 
 # Pi Extension Data
 .pi/extensions/whatsapp/auth/

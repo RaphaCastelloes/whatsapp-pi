@@ -8,7 +8,7 @@ import {
 import P from 'pino';
 import { Boom } from '@hapi/boom';
 import { SessionManager } from './session.manager.js';
-import { WhatsAppSession, SessionStatus } from '../models/whatsapp.types.js';
+import { IncomingMessage, WhatsAppSession, SessionStatus } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
 
 export class WhatsAppService {
@@ -17,6 +17,8 @@ export class WhatsAppService {
     private messageSender: MessageSender;
     private isReconnecting = false;
     private verboseMode = false;
+    private onIncomingMessageRecorded?: (message: IncomingMessage) => void | Promise<void>;
+    private saveCreds?: () => Promise<void>;
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
@@ -25,6 +27,10 @@ export class WhatsAppService {
 
     public getStatus(): SessionStatus {
         return this.sessionManager.getStatus();
+    }
+
+    public setIncomingMessageRecorder(callback: (message: IncomingMessage) => void | Promise<void>) {
+        this.onIncomingMessageRecorded = callback;
     }
 
     public getSocket(): any {
@@ -39,11 +45,24 @@ export class WhatsAppService {
         this.verboseMode = verbose;
     }
 
+    private normalizeContactNumber(value: string): string {
+        if (value.startsWith('+')) {
+            return value;
+        }
+
+        if (/^\d+$/.test(value)) {
+            return `+${value}`;
+        }
+
+        return value;
+    }
+
     async start() {
         if (this.isReconnecting) return;
-        this.onStatusUpdate?.('WhatsApp: Connecting...');
+        this.onStatusUpdate?.('| WhatsApp: Connecting...');
 
         const { state, saveCreds } = await this.sessionManager.getAuthState();
+        this.saveCreds = saveCreds;
         const { version } = await fetchLatestBaileysVersion();
 
         // Cleanup existing socket if any
@@ -68,7 +87,10 @@ export class WhatsAppService {
             logger,
         });
 
-        this.socket.ev.on('creds.update', saveCreds);
+        this.socket.ev.on('creds.update', async () => {
+            await saveCreds();
+            await this.sessionManager.markAuthStateAvailable();
+        });
 
         this.socket.ev.on('connection.update', async (update: any) => {
             const { connection, lastDisconnect, qr } = update;
@@ -76,54 +98,55 @@ export class WhatsAppService {
             if (qr) {
                 this.sessionManager.setStatus('pairing');
                 this.onQRCode?.(qr);
-                this.onStatusUpdate?.('WhatsApp: Pairing...');
+                this.onStatusUpdate?.('| WhatsApp: Pairing...');
             }
 
             if (connection === 'close') {
                 const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
                 const errorMessage = lastDisconnect?.error?.message || '';
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                const shouldTreatAsLoggedOut =
+                    errorMessage.includes('bad-request') ||
+                    statusCode === 400 ||
+                    statusCode === 401 ||
+                    statusCode === DisconnectReason.loggedOut ||
+                    statusCode === DisconnectReason.badSession;
                 
                 console.error(`Connection closed [${statusCode}]. Reconnecting: ${shouldReconnect}`);
                 
-                if (
-                    errorMessage.includes('bad-request') || 
-                    statusCode === 400 || 
-                    statusCode === 401 || 
-                    statusCode === DisconnectReason.loggedOut ||
-                    statusCode === DisconnectReason.badSession
-                ) {
-                    console.error(`Session invalid or logged out [${statusCode}] - clearing session and forcing re-auth`);
-                    await this.sessionManager.clearSession();
+                if (shouldTreatAsLoggedOut) {
+                    console.error(`Session invalid or logged out [${statusCode}] - preserving auth state and requiring re-auth`);
                     this.sessionManager.setStatus('logged-out');
-                    this.onStatusUpdate?.('WhatsApp: Logged out');
+                    this.onStatusUpdate?.('| WhatsApp: Logged out');
                     return;
                 }
 
                 if (statusCode === DisconnectReason.connectionReplaced) {
                     console.error('Connection replaced - another instance connected');
-                    this.onStatusUpdate?.('WhatsApp: Conflict (Another Instance)');
+                    this.onStatusUpdate?.('| WhatsApp: Conflict (Another Instance)');
                     return;
                 }
                 
                 if (shouldReconnect && !this.isReconnecting) {
                     this.isReconnecting = true;
-                    this.onStatusUpdate?.('WhatsApp: Reconnecting...');
+                    this.onStatusUpdate?.('| WhatsApp: Reconnecting...');
                     setTimeout(() => {
                         this.isReconnecting = false;
                         this.start();
                     }, 3000);
                 } else if (!shouldReconnect) {
                     this.sessionManager.setStatus('logged-out');
-                    this.onStatusUpdate?.('WhatsApp: Disconnected');
+                    this.onStatusUpdate?.('| WhatsApp: Disconnected');
                 }
             } else if (connection === 'open') {
                 if (this.verboseMode) {
                     console.log('WhatsApp connection successfully opened');
                 }
                 this.isReconnecting = false;
+                await this.saveCreds?.();
+                await this.sessionManager.markAuthStateAvailable();
                 this.sessionManager.setStatus('connected');
-                this.onStatusUpdate?.('WhatsApp: Connected');
+                this.onStatusUpdate?.('| WhatsApp: Connected');
             }
         });
 
@@ -141,7 +164,22 @@ export class WhatsAppService {
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
         if (text.endsWith('π')) return;
 
-        const senderJid = msg.key.remoteJid.split('@')[0];
+        const remoteJid = msg.key.remoteJid;
+        if (remoteJid.endsWith('@g.us')) return;
+
+        const senderJid = this.normalizeContactNumber(remoteJid.split('@')[0]);
+
+        void Promise.resolve(this.onIncomingMessageRecorded?.({
+            id: msg.key.id,
+            remoteJid,
+            pushName: msg.pushName || undefined,
+            text,
+            timestamp: typeof msg.messageTimestamp === 'number' ? Number(msg.messageTimestamp) : Date.now()
+        })).catch(error => {
+            if (this.verboseMode) {
+                console.error('Failed to record recent message:', error);
+            }
+        });
         
         if (this.sessionManager.isBlocked(senderJid)) {
             if (this.isVerbose()) {
@@ -228,10 +266,18 @@ export class WhatsAppService {
 
     async logout() {
         await this.socket?.logout();
-        await this.sessionManager.clearSession();
+        await this.sessionManager.deleteAuthState();
     }
 
     async stop() {
+        try {
+            await this.saveCreds?.();
+        } catch (error) {
+            if (this.verboseMode) {
+                console.error('Failed to persist auth state during stop:', error);
+            }
+        }
+
         if (this.socket) {
             this.socket.ev.removeAllListeners('connection.update');
             this.socket.ev.removeAllListeners('creds.update');
@@ -243,6 +289,6 @@ export class WhatsAppService {
             this.isReconnecting = false;
         }
         await this.sessionManager.setStatus('disconnected');
-        this.onStatusUpdate?.('WhatsApp: Disconnected');
+        this.onStatusUpdate?.('| WhatsApp: Disconnected');
     }
 }

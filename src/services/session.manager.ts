@@ -1,6 +1,6 @@
 import { useMultiFileAuthState } from '@whiskeysockets/baileys';
 import { join } from 'path';
-import { readFile, writeFile, mkdir, rm } from 'fs/promises';
+import { readFile, writeFile, mkdir, rm, readdir } from 'fs/promises';
 import { homedir } from 'os';
 import { SessionStatus } from '../models/whatsapp.types.js';
 
@@ -12,21 +12,27 @@ export interface Contact {
 export class SessionManager {
     // Data is stored in the user's home directory to persist across updates
     private readonly baseDir = join(homedir(), '.pi', 'whatsapp-pi');
-    private readonly authDir = join(this.baseDir, 'auth');
+    private readonly authStateDir = join(this.baseDir, 'auth');
     private readonly configPath = join(this.baseDir, 'config.json');
 
     private status: SessionStatus = 'logged-out';
     private allowList: Contact[] = [];
     private blockList: Contact[] = [];
     private ignoredNumbers: Contact[] = [];
+    private hasAuthState = false;
     private openaiKey: string = '';
     private visionModel: string = 'gpt-4o';
 
+    private async ensureStorageDirectories() {
+        await mkdir(this.baseDir, { recursive: true });
+        await mkdir(this.authStateDir, { recursive: true });
+    }
+
     public async ensureInitialized() {
         try {
-            await mkdir(this.baseDir, { recursive: true });
-            await mkdir(this.authDir, { recursive: true });
+            await this.ensureStorageDirectories();
             await this.loadConfig();
+            await this.syncAuthStateFromDisk();
         } catch (error) {}
     }
 
@@ -54,6 +60,7 @@ export class SessionManager {
             this.blockList = (config.blockList || []).map(cleanContact).filter(Boolean) as Contact[];
             this.ignoredNumbers = (config.ignoredNumbers || []).map(cleanContact).filter(Boolean) as Contact[];
             this.status = config.status || 'logged-out';
+            this.hasAuthState = Boolean(config.hasAuthState);
             this.openaiKey = config.openaiKey || '';
             this.visionModel = config.visionModel || 'gpt-4o';
         } catch (error) {
@@ -68,6 +75,7 @@ export class SessionManager {
                 blockList: this.blockList,
                 ignoredNumbers: this.ignoredNumbers,
                 status: this.status,
+                hasAuthState: this.hasAuthState,
                 openaiKey: this.openaiKey,
                 visionModel: this.visionModel
             };
@@ -79,6 +87,10 @@ export class SessionManager {
 
     getAllowList(): Contact[] {
         return this.allowList;
+    }
+
+    getAllowedContact(number: string): Contact | undefined {
+        return this.allowList.find(c => c.number === number);
     }
 
     getBlockList(): Contact[] {
@@ -106,11 +118,18 @@ export class SessionManager {
             return;
         }
 
-        if (!this.allowList.find(c => c.number === cleanNumber)) {
+        const existing = this.allowList.find(c => c.number === cleanNumber);
+        if (!existing) {
             this.allowList.push({ number: cleanNumber, name });
             // Remove from blockList and ignoredNumbers if it was there
             this.blockList = this.blockList.filter(c => c.number !== cleanNumber);
             this.ignoredNumbers = this.ignoredNumbers.filter(c => c.number !== cleanNumber);
+            await this.saveConfig();
+            return;
+        }
+
+        if (name && !existing.name) {
+            existing.name = name;
             await this.saveConfig();
         }
     }
@@ -120,8 +139,28 @@ export class SessionManager {
         await this.saveConfig();
     }
 
-    async clearAllowList() {
-        this.allowList = [];
+    async setAllowedContactAlias(number: string, alias: string) {
+        const trimmedAlias = alias.trim();
+        if (!trimmedAlias) {
+            return;
+        }
+
+        const contact = this.getAllowedContact(number);
+        if (!contact) {
+            return;
+        }
+
+        contact.name = trimmedAlias;
+        await this.saveConfig();
+    }
+
+    async removeAllowedContactAlias(number: string) {
+        const contact = this.getAllowedContact(number);
+        if (!contact || !contact.name) {
+            return;
+        }
+
+        delete contact.name;
         await this.saveConfig();
     }
 
@@ -168,25 +207,51 @@ export class SessionManager {
 
     public async isRegistered(): Promise<boolean> {
         try {
-            const credsPah = join(this.authDir, 'creds.json');
+            const credsPah = join(this.authStateDir, 'creds.json');
             await readFile(credsPah);
+            this.hasAuthState = true;
             return true;
         } catch {
-            return false;
+            await this.syncAuthStateFromDisk();
+            return this.hasAuthState;
+        }
+    }
+
+    async markAuthStateAvailable() {
+        if (!this.hasAuthState) {
+            this.hasAuthState = true;
+            await this.saveConfig();
         }
     }
 
     async getAuthState() {
-        return await useMultiFileAuthState(this.authDir);
+        await this.ensureStorageDirectories();
+        return await useMultiFileAuthState(this.authStateDir);
     }
 
-    async clearSession() {
+    private async syncAuthStateFromDisk() {
         try {
-            await rm(this.authDir, { recursive: true, force: true });
+            const entries = await readdir(this.authStateDir);
+            if (entries.length > 0) {
+                if (!this.hasAuthState) {
+                    this.hasAuthState = true;
+                    await this.saveConfig();
+                }
+            }
+        } catch {
+            // Ignore missing directory / empty auth state
+        }
+    }
+
+    async deleteAuthState() {
+        try {
+            await rm(this.authStateDir, { recursive: true, force: true });
+            await mkdir(this.authStateDir, { recursive: true });
             this.status = 'logged-out';
+            this.hasAuthState = false;
             await this.saveConfig();
         } catch (error) {
-            console.error('Failed to clear session:', error);
+            console.error('Failed to delete auth state:', error);
         }
     }
 
@@ -217,7 +282,7 @@ export class SessionManager {
         await this.saveConfig();
     }
 
-    getAuthDir(): string {
-        return this.authDir;
+    getAuthStateDir(): string {
+        return this.authStateDir;
     }
 }

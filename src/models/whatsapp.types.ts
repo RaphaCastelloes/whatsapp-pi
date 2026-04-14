@@ -52,3 +52,29 @@ export interface DocumentMetadata {
     savedPath: string;
     timestamp: number;
 }
+
+export type MessageDirection = 'incoming' | 'outgoing';
+
+export interface RecentConversationMessage {
+    messageId: string;
+    senderNumber: string;
+    text: string;
+    direction: MessageDirection;
+    timestamp: number;
+}
+
+export interface RecentConversationSummary {
+    senderNumber: string;
+    senderName?: string;
+    lastMessagePreview: string;
+    lastMessageTime: number;
+    lastMessageDirection: MessageDirection;
+    messageCount: number;
+    isAllowed: boolean;
+}
+
+export interface RecentsStore {
+    conversations: RecentConversationSummary[];
+    messagesBySender: Record<string, RecentConversationMessage[]>;
+    updatedAt: number;
+}

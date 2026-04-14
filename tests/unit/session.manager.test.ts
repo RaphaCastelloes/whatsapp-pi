@@ -19,11 +19,11 @@ describe('SessionManager', () => {
         expect(sessionManager.getStatus()).toBe('connected');
     });
 
-    it('should clear session directory', async () => {
-        const authDir = sessionManager.getAuthDir();
+    it('should clear session directory and recreate auth folder', async () => {
+        const authDir = sessionManager.getAuthStateDir();
         sessionManager.setStatus('connected');
         
-        await sessionManager.clearSession();
+        await sessionManager.deleteAuthState();
         
         expect(sessionManager.getStatus()).toBe('logged-out');
         
@@ -33,7 +33,12 @@ describe('SessionManager', () => {
         } catch {
             exists = false;
         }
-        expect(exists).toBe(false);
+        expect(exists).toBe(true);
+    });
+
+    it('should remember auth state once available', async () => {
+        await sessionManager.markAuthStateAvailable();
+        expect(await sessionManager.isRegistered()).toBe(true);
     });
 
     it('should handle block list and mutual exclusivity', async () => {
@@ -71,6 +76,21 @@ describe('SessionManager', () => {
         expect(allowList).toHaveLength(1);
         expect(allowList[0].number).toBe(num);
         expect(allowList[0].name).toBe(name);
+    });
+
+    it('should add and remove an alias for an existing allowed number', async () => {
+        const num = '+1234567890';
+        const alias = 'My Contact';
+
+        await sessionManager.addNumber(num);
+        await sessionManager.setAllowedContactAlias(num, alias);
+
+        let allowList = sessionManager.getAllowList();
+        expect(allowList[0].name).toBe(alias);
+
+        await sessionManager.removeAllowedContactAlias(num);
+        allowList = sessionManager.getAllowList();
+        expect(allowList[0].name).toBeUndefined();
     });
 
     it('should preserve name when unblocking and allowing', async () => {
