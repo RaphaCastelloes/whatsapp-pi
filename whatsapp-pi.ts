@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import { extractMessageContent } from '@whiskeysockets/baileys';
 import { SessionManager } from './src/services/session.manager.js';
 import { WhatsAppService } from './src/services/whatsapp.service.js';
@@ -99,7 +100,7 @@ export default function (pi: ExtensionAPI) {
             .find(entry => entry.type === "custom" && entry.customType === "whatsapp-state");
 
         if (savedStateEntry) {
-            const data = savedStateEntry.data as any;
+            const data = (savedStateEntry as { data?: any }).data;
             if (data.status) await sessionManager.setStatus(data.status);
             if (Array.isArray(data.allowList)) {
                 for (const n of data.allowList) {
@@ -426,6 +427,45 @@ export default function (pi: ExtensionAPI) {
         }
 
         
+    });
+
+    // Register send_wa_message tool (LLM-callable)
+    pi.registerTool({
+        name: "send_wa_message",
+        label: "Send WhatsApp Message",
+        description: "Send a WhatsApp message to a contact identified by their JID (e.g. 5511999998888@s.whatsapp.net). Returns a JSON result with success status and messageId or error.",
+        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message to a contact by JID",
+        parameters: Type.Object({
+            jid: Type.String({ minLength: 1, description: "WhatsApp JID of the recipient, e.g. 5511999998888@s.whatsapp.net" }),
+            message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
+        }),
+        async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+            if (whatsappService.getStatus() !== 'connected') {
+                return {
+                    isError: true,
+                    details: undefined,
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "WhatsApp not connected", attempts: 0 }) }]
+                };
+            }
+
+            const result = await whatsappService.sendMessage(params.jid, params.message);
+
+            if (result.success) {
+                await recentsService.recordMessage({
+                    messageId: result.messageId!,
+                    senderNumber: `+${params.jid.split('@')[0]}`,
+                    text: params.message,
+                    direction: 'outgoing',
+                    timestamp: Date.now()
+                });
+            }
+
+            return {
+                isError: !result.success,
+                details: undefined,
+                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts }) }]
+            };
+        }
     });
 
     // Register commands

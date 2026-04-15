@@ -1,8 +1,8 @@
 {
-  "ai": "pi",
+  "ai": "windsurf",
   "branch_numbering": "sequential",
   "here": true,
-  "integration": "pi",
+  "integration": "windsurf",
   "preset": null,
   "script": "ps",
   "speckit_version": "0.5.1.dev0"

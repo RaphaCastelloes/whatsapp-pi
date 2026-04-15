@@ -1,7 +1,7 @@
 {
-  "integration": "pi",
+  "integration": "windsurf",
   "version": "0.5.1.dev0",
   "scripts": {
-    "update-context": ".specify/integrations/pi/scripts/update-context.ps1"
+    "update-context": ".specify/integrations/windsurf/scripts/update-context.ps1"
   }
 }
