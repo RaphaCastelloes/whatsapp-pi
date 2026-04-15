@@ -17,16 +17,13 @@ export class MenuHandler {
         const registered = await this.sessionManager.isRegistered();
         const options: string[] = [];
 
-        options.push('Recents');
-
         if (status === 'connected') {
+            options.push('Recents');
             options.push('Allowed Numbers');
             options.push('Blocked Numbers');
             options.push('Disconnect WhatsApp');
         } else {
-            options.push('Connect / Reconnect WhatsApp');
-            options.push('Allowed Numbers');
-            options.push('Blocked Numbers');
+            options.push('Connect WhatsApp');
         }
 
         if (registered) {
@@ -38,7 +35,7 @@ export class MenuHandler {
         const choice = await ctx.ui.select(`WhatsApp (Status: ${status})`, options);
 
         switch (choice) {
-            case 'Connect / Reconnect WhatsApp':
+            case 'Connect WhatsApp':
                 if (status === 'connected') {
                     ctx.ui.notify('WhatsApp is already connected', 'info');
                     break;
