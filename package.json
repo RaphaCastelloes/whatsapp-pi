@@ -39,6 +39,7 @@
     "@mariozechner/pi-coding-agent": "latest",
     "@types/node": "^20.11.0",
     "@types/qrcode-terminal": "^0.12.2",
+    "@vitest/coverage-v8": "^1.6.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",

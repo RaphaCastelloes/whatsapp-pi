@@ -191,7 +191,6 @@ export class RecentsService {
         const normalizedNumber = this.normalizeNumber(senderNumber);
         const messages = this.store.messagesBySender[normalizedNumber] ?? [];
         return [...messages]
-            .map(message => ({ ...message, timestamp: this.normalizeTimestamp(message.timestamp) }))
             .sort((left, right) => left.timestamp - right.timestamp)
             .slice(-20);
     }

@@ -178,12 +178,7 @@ export class MenuHandler {
         const choice = await ctx.ui.select('Blocked Numbers (Select to Manage)', options);
 
         if (choice && choice !== 'Back') {
-            let num = choice;
-            if (num.includes('(')) {
-                const match = num.match(/\((.*?)\)/);
-                if (match) num = match[1];
-            }
-            await this.manageBlockedNumber(ctx, num);
+            await this.manageBlockedNumber(ctx, this.parseContactNumberOption(choice));
         } else {
             await this.handleCommand(ctx);
         }
@@ -301,36 +296,33 @@ export class MenuHandler {
     }
 
     private async sendMessageFromRecents(ctx: ExtensionCommandContext, conversation: RecentConversationSummary) {
-        const displayName = this.getConversationDisplayName(conversation);
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const text = await ctx.ui.input(`Send a message to ${displayName}:`);
-            const trimmed = text?.trim() || '';
-
-            if (!trimmed) {
-                ctx.ui.notify('Please enter a message before sending.', 'error');
-                continue;
-            }
-
-            const result = await this.whatsappService.sendMenuMessage(this.toJid(conversation.senderNumber), trimmed);
-            if (result.success) {
-                await this.recentsService.recordMessage({
-                    messageId: result.messageId ?? `${Date.now()}`,
-                    senderNumber: conversation.senderNumber,
-                    senderName: conversation.senderName,
-                    text: trimmed,
-                    direction: 'outgoing',
-                    timestamp: Date.now()
-                });
-                ctx.ui.notify(`Sent message to ${displayName}`, 'info');
-            } else {
-                ctx.ui.notify(`Failed to send message to ${displayName}: ${result.error ?? 'Unknown error'}`, 'error');
-            }
-            return;
-        }
+        await this.sendPromptedMenuMessage(ctx, {
+            displayName: this.getConversationDisplayName(conversation),
+            senderNumber: conversation.senderNumber,
+            senderName: conversation.senderName,
+            appendPiSuffix: false
+        });
     }
 
     private async sendMessageToAllowedNumber(ctx: ExtensionCommandContext, contact: Contact) {
-        const displayName = contact.name ? `${contact.name} (${contact.number})` : contact.number;
+        await this.sendPromptedMenuMessage(ctx, {
+            displayName: this.formatAllowedContactOption(contact),
+            senderNumber: contact.number,
+            senderName: contact.name,
+            appendPiSuffix: true
+        });
+    }
+
+    private async sendPromptedMenuMessage(
+        ctx: ExtensionCommandContext,
+        options: {
+            displayName: string;
+            senderNumber: string;
+            senderName?: string;
+            appendPiSuffix: boolean;
+        }
+    ) {
+        const { displayName, senderNumber, senderName, appendPiSuffix } = options;
         for (let attempt = 0; attempt < 2; attempt++) {
             const inputText = (await ctx.ui.input(`Send a message to ${displayName}:`))?.trim() || '';
 
@@ -339,15 +331,14 @@ export class MenuHandler {
                 continue;
             }
 
-            const inputTextWithPiSuffix = inputText + ' π';
-
-            const result = await this.whatsappService.sendMenuMessage(this.toJid(contact.number), inputTextWithPiSuffix);
+            const messageText = appendPiSuffix ? `${inputText} π` : inputText;
+            const result = await this.whatsappService.sendMenuMessage(this.toJid(senderNumber), messageText);
             if (result.success) {
                 await this.recentsService.recordMessage({
                     messageId: result.messageId ?? `${Date.now()}`,
-                    senderNumber: contact.number,
-                    senderName: contact.name,
-                    text: inputTextWithPiSuffix,
+                    senderNumber,
+                    senderName,
+                    text: messageText,
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
@@ -402,6 +393,15 @@ export class MenuHandler {
 
     private formatAllowedContactSortKey(contact: Contact): string {
         return contact.name ? `${contact.name} ${contact.number}` : contact.number;
+    }
+
+    private parseContactNumberOption(choice: string): string {
+        if (!choice.includes('(')) {
+            return choice;
+        }
+
+        const match = choice.match(/\((.*?)\)/);
+        return match?.[1] ?? choice;
     }
 
     private formatHistoryOption(timestamp: number, direction: string, text: string): string {
