@@ -285,4 +285,72 @@ export class SessionManager {
     getAuthStateDir(): string {
         return this.authStateDir;
     }
+
+    // QR Code Detection Methods
+
+    /**
+     * Checks if QR code flow is needed (no valid credentials exist)
+     */
+    public async needsQRCode(): Promise<boolean> {
+        try {
+            // Check if we have valid authentication state
+            const hasValidCredentials = await this.hasValidCredentials();
+            return !hasValidCredentials;
+        } catch (error) {
+            // If we can't determine, assume QR is needed
+            return true;
+        }
+    }
+
+    /**
+     * Checks if valid credentials exist
+     */
+    public async hasValidCredentials(): Promise<boolean> {
+        try {
+            // Check if credentials file exists and is readable
+            const credsPath = join(this.authStateDir, 'creds.json');
+            await readFile(credsPath, 'utf-8');
+            
+            // Also check if we have the hasAuthState flag set
+            return this.hasAuthState;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Marks QR code pairing as completed
+     */
+    public async markQRCompleted(): Promise<void> {
+        await this.markAuthStateAvailable();
+        this.status = 'connected';
+        await this.saveConfig();
+    }
+
+    /**
+     * Invalidates current QR session (used for logout/re-pairing)
+     */
+    public async invalidateQRSession(): Promise<void> {
+        // Clear auth state to trigger QR flow on next connection
+        this.hasAuthState = false;
+        this.status = 'logged-out';
+        await this.saveConfig();
+    }
+
+    /**
+     * Waits for credentials to become available (with timeout)
+     */
+    public async waitForCredentials(timeout: number = 120000): Promise<boolean> {
+        const startTime = Date.now();
+        const checkInterval = 1000; // Check every second
+
+        while (Date.now() - startTime < timeout) {
+            if (await this.hasValidCredentials()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        }
+
+        return false; // Timeout reached
+    }
 }

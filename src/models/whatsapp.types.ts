@@ -78,3 +78,62 @@ export interface RecentsStore {
     messagesBySender: Record<string, RecentConversationMessage[]>;
     updatedAt: number;
 }
+
+// QR Code Display Types
+export interface QRCodeSession {
+    id: string;
+    qrData: string;
+    expiresAt: Date;
+    isActive: boolean;
+    createdAt: Date;
+    refreshCount: number;
+}
+
+export interface QRDisplayState {
+    isDisplaying: boolean;
+    currentSession?: QRCodeSession;
+    lastInstruction: string;
+    warningMessage?: string;
+}
+
+export enum PairingStatus {
+    IDLE = 'idle',
+    GENERATING_QR = 'generating',
+    DISPLAYING_QR = 'displaying',
+    SCANNING = 'scanning',
+    CONNECTED = 'connected',
+    FAILED = 'failed'
+}
+
+export type ExtendedSessionStatus = SessionStatus | 'pairing' | 'qr-expired';
+
+export interface QRCodeDisplayOptions {
+    terminalWidth?: number;
+    refreshInterval: number;
+    showInstructions: boolean;
+    showExpirationWarning: boolean;
+}
+
+export class QRError extends Error {
+    constructor(
+        public code: string,
+        message: string,
+        public technical?: string,
+        public recoverable: boolean = true
+    ) {
+        super(message);
+        this.name = 'QRError';
+        this.timestamp = new Date();
+    }
+
+    public timestamp: Date;
+}
+
+export enum QRErrorCode {
+    TERMINAL_UNSUPPORTED = 'TERMINAL_UNSUPPORTED',
+    QR_GENERATION_FAILED = 'QR_GENERATION_FAILED',
+    DISPLAY_ERROR = 'DISPLAY_ERROR',
+    CONNECTION_TIMEOUT = 'CONNECTION_TIMEOUT',
+    NETWORK_ERROR = 'NETWORK_ERROR',
+    INVALID_CREDENTIALS = 'INVALID_CREDENTIALS'
+}

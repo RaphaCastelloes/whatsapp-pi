@@ -7,6 +7,7 @@ import {
 } from '@whiskeysockets/baileys';
 import P from 'pino';
 import { Boom } from '@hapi/boom';
+import qr from 'qrcode-terminal';
 import { SessionManager } from './session.manager.js';
 import { IncomingMessage, WhatsAppSession, SessionStatus } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
@@ -119,6 +120,7 @@ export class WhatsAppService {
             
             if (qr) {
                 this.sessionManager.setStatus('pairing');
+                this.displayQRCode(qr);
                 this.onQRCode?.(qr);
                 this.onStatusUpdate?.('| WhatsApp: Pairing...');
             }
@@ -254,6 +256,28 @@ export class WhatsAppService {
 
     setStatusCallback(callback: (status: string) => void) {
         this.onStatusUpdate = callback;
+    }
+
+    private displayQRCode(qrData: string): void {
+        // Clear screen and show QR code with instructions
+        console.clear();
+        
+        console.log('');
+        console.log('WhatsApp: Pairing...');
+        console.log('Scan this QR code with your WhatsApp mobile app:');
+        console.log('');
+        
+        // Display QR code
+        qr.generate(qrData, { small: true });
+        
+        console.log('');
+        console.log('1. Open WhatsApp on your phone');
+        console.log('2. Go to Settings > Linked Devices');
+        console.log('3. Tap "Link a device"');
+        console.log('4. Point your camera at this QR code');
+        console.log('');
+        console.log('QR code will refresh automatically if it expires.');
+        console.log('');
     }
 
     public getLastRemoteJid(): string | null {
