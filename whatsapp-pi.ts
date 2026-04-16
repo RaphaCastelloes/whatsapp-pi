@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
     };
 
     // Initial status setup
-    pi.on("session_start", async (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
         _ctx = ctx;
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
@@ -111,12 +111,12 @@ export default function (pi: ExtensionAPI) {
             }
         }
 
-        // Check whatsapp flag
-        const isWhatsappPiOn = process.argv.includes("--whatsapp-pi-online");
+        // Check whatsapp flag — only auto-connect on initial startup, not reloads/new sessions
+        const isWhatsappPiOn = event.reason === "startup" && pi.getFlag("whatsapp-pi-online") === true;
         const registered = await sessionManager.isRegistered();
 
-        if (registered || isWhatsappPiOn) {
-            ctx.ui.setStatus('whatsapp', registered ? '| WhatsApp: Reconnecting...' : '| WhatsApp: Auto-connecting...');
+        if (isWhatsappPiOn && registered) {
+            ctx.ui.setStatus('whatsapp', '| WhatsApp: Auto-connecting...');
 
             // Retry logic (max 3 attempts, 3s delay)
             let attempts = 0;
