@@ -13,7 +13,7 @@ export class MenuHandler {
     ) {}
 
     async handleCommand(ctx: ExtensionCommandContext) {
-        const status = `connected`
+        const status = this.whatsappService.getEffectiveStatus();
         const registered = await this.sessionManager.isRegistered();
         const options: string[] = [];
 
