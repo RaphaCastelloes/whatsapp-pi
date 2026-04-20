@@ -1,14 +1,12 @@
-import { 
+import {
     makeWASocket,
-    DisconnectReason, 
-    useMultiFileAuthState, 
+    DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys';
 import P from 'pino';
-import { Boom } from '@hapi/boom';
 import { SessionManager } from './session.manager.js';
-import { IncomingMessage, WhatsAppSession, SessionStatus } from '../models/whatsapp.types.js';
+import { IncomingMessage, SessionStatus } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
 import { installBaileysConsoleFilter } from './baileys-console-filter.js';
 
@@ -16,8 +14,65 @@ export interface WhatsAppStartOptions {
     allowPairingOnAuthFailure?: boolean;
 }
 
+interface DisconnectPayload {
+    error?: unknown;
+}
+
+interface ConnectionUpdateEvent {
+    connection?: 'close' | 'open' | string;
+    lastDisconnect?: DisconnectPayload;
+    qr?: string;
+}
+
+interface IncomingMessageKey {
+    id?: string;
+    remoteJid?: string;
+    fromMe?: boolean;
+}
+
+interface IncomingMessageContent {
+    conversation?: string;
+    extendedTextMessage?: { text?: string };
+}
+
+interface IncomingMessageLike {
+    key: IncomingMessageKey;
+    message?: IncomingMessageContent;
+    pushName?: string;
+    messageTimestamp?: number | string;
+}
+
+interface MessagesUpsertEvent {
+    messages?: IncomingMessageLike[];
+}
+
+interface WhatsAppSocketLike {
+    ev: {
+        on(event: 'connection.update', handler: (update: ConnectionUpdateEvent) => void | Promise<void>): void;
+        on(event: 'creds.update', handler: () => void | Promise<void>): void;
+        on(event: 'messages.upsert', handler: (payload: MessagesUpsertEvent) => void | Promise<void>): void;
+        removeAllListeners(event: 'connection.update' | 'creds.update' | 'messages.upsert'): void;
+    };
+    end(reason?: unknown): void;
+    logout(): Promise<void>;
+    sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } } | undefined>;
+    sendPresenceUpdate(presence: 'composing' | 'recording' | 'paused', jid: string): Promise<void>;
+    readMessages(messages: Array<{ remoteJid: string; id: string; fromMe: boolean }>): Promise<void>;
+}
+
+interface LastDisconnectLike {
+    error?: unknown;
+}
+
+interface BoomLikeError {
+    output?: {
+        statusCode?: number;
+    };
+    message?: string;
+}
+
 export class WhatsAppService {
-    private socket: any;
+    private socket?: WhatsAppSocketLike;
     private sessionManager: SessionManager;
     private messageSender: MessageSender;
     private isReconnecting = false;
@@ -25,6 +80,11 @@ export class WhatsAppService {
     private onIncomingMessageRecorded?: (message: IncomingMessage) => void | Promise<void>;
     private saveCreds?: () => Promise<void>;
     private restoreBaileysConsoleFilter?: () => void;
+    private reconnectTimeout?: ReturnType<typeof setTimeout>;
+    private onQRCode?: (qr: string) => void;
+    private onMessage?: (m: unknown) => void;
+    private onStatusUpdate?: (status: string) => void;
+    private lastRemoteJid: string | null = null;
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
@@ -48,7 +108,7 @@ export class WhatsAppService {
         this.onIncomingMessageRecorded = callback;
     }
 
-    public getSocket(): any {
+    public getSocket(): WhatsAppSocketLike | undefined {
         return this.socket;
     }
 
@@ -76,196 +136,311 @@ export class WhatsAppService {
         return value;
     }
 
-    async start(options: WhatsAppStartOptions = {}) {
-        const allowPairingOnAuthFailure = options.allowPairingOnAuthFailure ?? true;
-        if (this.isReconnecting) return;
-        this.onStatusUpdate?.('| WhatsApp: Connecting...');
+    private normalizeRecipientJid(jid: string): string {
+        if (jid.includes('@')) return jid;
+        const digits = jid.startsWith('+') ? jid.slice(1) : jid;
+        return `${digits}@s.whatsapp.net`;
+    }
 
+    private getDisconnectStatusCode(error: unknown): number | undefined {
+        if (!error || typeof error !== 'object') {
+            return undefined;
+        }
+
+        const candidate = error as BoomLikeError;
+        return candidate.output?.statusCode;
+    }
+
+    private getErrorMessage(error: unknown): string {
+        if (error instanceof Error) {
+            return error.message;
+        }
+
+        if (typeof error === 'object' && error !== null && 'message' in error) {
+            const candidate = error as { message?: unknown };
+            return typeof candidate.message === 'string' ? candidate.message : '';
+        }
+
+        return '';
+    }
+
+    private clearReconnectTimeout() {
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = undefined;
+        }
+    }
+
+    private cleanupSocket() {
+        this.clearReconnectTimeout();
+
+        if (!this.socket) {
+            return;
+        }
+
+        this.restoreBaileysConsoleFilter?.();
+        this.restoreBaileysConsoleFilter = undefined;
+        this.socket.ev.removeAllListeners('connection.update');
+        this.socket.ev.removeAllListeners('creds.update');
+        this.socket.ev.removeAllListeners('messages.upsert');
+
+        try {
+            this.socket.end(undefined);
+        } catch {
+            // Best-effort cleanup
+        }
+
+        this.socket = undefined;
+    }
+
+    private setSocket(socket: WhatsAppSocketLike) {
+        this.socket = socket;
+    }
+
+    private registerSocketListeners(socket: WhatsAppSocketLike, options: WhatsAppStartOptions, saveCreds: () => Promise<void>) {
+        socket.ev.on('creds.update', async () => {
+            await saveCreds();
+            await this.sessionManager.markAuthStateAvailable();
+        });
+
+        socket.ev.on('connection.update', async (update) => {
+            await this.handleConnectionUpdate(update, options);
+        });
+
+        socket.ev.on('messages.upsert', (payload) => {
+            void this.handleIncomingMessages(payload);
+        });
+    }
+
+    private async createSocket(): Promise<WhatsAppSocketLike> {
         const { state, saveCreds } = await this.sessionManager.getAuthState();
         this.saveCreds = saveCreds;
         const { version } = await fetchLatestBaileysVersion();
 
-        // Cleanup existing socket if any
-        if (this.socket) {
-            this.restoreBaileysConsoleFilter?.();
-            this.restoreBaileysConsoleFilter = undefined;
-            this.socket.ev.removeAllListeners('connection.update');
-            this.socket.ev.removeAllListeners('creds.update');
-            this.socket.ev.removeAllListeners('messages.upsert');
-            try {
-                this.socket.end(undefined);
-            } catch (e) {}
-        }
-
         const logger = P({ level: this.verboseMode ? 'trace' : 'silent' });
-        
-        // Suppress Baileys console output during initialization
+
+        const socket = makeWASocket({
+            version,
+            printQRInTerminal: false,
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, logger)
+            },
+            syncFullHistory: false,
+            logger
+        }) as WhatsAppSocketLike;
+
+        return socket;
+    }
+
+    async start(options: WhatsAppStartOptions = {}) {
+        if (this.isReconnecting) return;
+        this.onStatusUpdate?.('| WhatsApp: Connecting...');
+
+        this.cleanupSocket();
+
         const originalConsoleLog = console.log;
         const originalConsoleWarn = console.warn;
         const originalConsoleError = console.error;
-        
+        let socketInitialized = false;
+
         if (!this.verboseMode) {
             console.log = () => {};
             console.warn = () => {};
             console.error = () => {};
         }
-        
+
         try {
-            this.socket = makeWASocket({
-                version,
-                printQRInTerminal: false,
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, logger),
-                },
-                syncFullHistory: false,
-                logger,
-            });
+            const socket = await this.createSocket();
+            this.setSocket(socket);
+            this.registerSocketListeners(socket, options, this.saveCreds ?? (async () => {}));
+            socketInitialized = true;
         } catch (error) {
-            // Restore console methods even if socket creation fails
             if (!this.verboseMode) {
                 console.log = originalConsoleLog;
                 console.warn = originalConsoleWarn;
                 console.error = originalConsoleError;
             }
             throw error;
-        }
-
-        this.socket.ev.on('creds.update', async () => {
-            await saveCreds();
-            await this.sessionManager.markAuthStateAvailable();
-        });
-
-        this.socket.ev.on('connection.update', async (update: any) => {
-            const { connection, lastDisconnect, qr } = update;
-            
-            if (qr) {
-                this.sessionManager.setStatus('pairing');
-                this.onQRCode?.(qr);
-                this.onStatusUpdate?.('| WhatsApp: type /whatsapp to connect');
+        } finally {
+            if (!this.verboseMode) {
+                console.log = originalConsoleLog;
+                console.warn = originalConsoleWarn;
+                console.error = originalConsoleError;
+                if (socketInitialized) {
+                    this.restoreBaileysConsoleFilter = installBaileysConsoleFilter(this.verboseMode);
+                }
             }
-
-            if (connection === 'close') {
-                const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-                const errorMessage = lastDisconnect?.error?.message || '';
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                const isBadMac = errorMessage.includes('Bad MAC');
-                const isAuthRejected =
-                    errorMessage.includes('bad-request') ||
-                    statusCode === 400 ||
-                    statusCode === 401 ||
-                    statusCode === DisconnectReason.loggedOut ||
-                    statusCode === DisconnectReason.badSession;
-                const shouldTreatAsLoggedOut = isBadMac || isAuthRejected;
-
-                if (this.verboseMode) {
-                    console.error(`Connection closed [${statusCode}]. Reconnecting: ${shouldReconnect}`);
-                }
-
-                if (shouldTreatAsLoggedOut) {
-                    if (isAuthRejected && !isBadMac && allowPairingOnAuthFailure) {
-                        if (this.verboseMode) {
-                            console.error(`Session rejected [${statusCode}] - clearing auth state and starting pairing`);
-                        }
-                        await this.sessionManager.deleteAuthState();
-                        this.socket.ev.removeAllListeners('connection.update');
-                        this.socket.ev.removeAllListeners('creds.update');
-                        this.socket.ev.removeAllListeners('messages.upsert');
-                        try {
-                            this.socket.end(undefined);
-                        } catch (e) {}
-                        this.socket = undefined;
-                        await this.start({ allowPairingOnAuthFailure: false });
-                        return;
-                    }
-
-                    if (this.verboseMode) {
-                        console.error(`Session invalid or logged out [${statusCode}] - preserving auth state and requiring re-auth`);
-                    }
-                    if (isBadMac) {
-                        if (this.verboseMode) {
-                            console.error('[WhatsApp-Pi] Bad MAC error detected. Your session keys are corrupted.');
-                            console.error('[WhatsApp-Pi] Run /whatsapp-logout to clear auth state, then reconnect with /whatsapp-connect');
-                        }
-                        this.onStatusUpdate?.('| WhatsApp: Session Error (Bad MAC)');
-                    }
-                    this.sessionManager.setStatus('logged-out');
-                    if (!isBadMac) {
-                        this.onStatusUpdate?.('| WhatsApp: Logged out');
-                    }
-                    return;
-                }
-
-                if (statusCode === DisconnectReason.connectionReplaced) {
-                    if (this.verboseMode) {
-                        console.error('Connection replaced - another instance connected');
-                    }
-                    this.onStatusUpdate?.('| WhatsApp: Conflict (Another Instance)');
-                    return;
-                }
-                
-                if (shouldReconnect && !this.isReconnecting) {
-                    this.isReconnecting = true;
-                    this.onStatusUpdate?.('| WhatsApp: Reconnecting...');
-                    setTimeout(() => {
-                        this.isReconnecting = false;
-                        this.start(options);
-                    }, 3000);
-                } else if (!shouldReconnect) {
-                    this.sessionManager.setStatus('logged-out');
-                    this.onStatusUpdate?.('| WhatsApp: Disconnected');
-                }
-            } else if (connection === 'open') {
-                if (this.verboseMode) {
-                    console.log('WhatsApp connection successfully opened');
-                }
-                this.isReconnecting = false;
-                await this.saveCreds?.();
-                await this.sessionManager.markAuthStateAvailable();
-                this.sessionManager.setStatus('connected');
-                this.onStatusUpdate?.('| WhatsApp: Connected');
-            }
-        });
-
-        this.socket.ev.on('messages.upsert', (m: any) => this.handleIncomingMessages(m));
-
-        // Restore console methods after socket creation
-        if (!this.verboseMode) {
-            console.log = originalConsoleLog;
-            console.warn = originalConsoleWarn;
-            console.error = originalConsoleError;
-            this.restoreBaileysConsoleFilter = installBaileysConsoleFilter(this.verboseMode);
         }
     }
 
-    public async handleIncomingMessages(m: any) {
-        if (this.sessionManager.getStatus() !== 'connected') return;
-        const msg = m.messages[0];
+    private async handleConnectionUpdate(update: ConnectionUpdateEvent, options: WhatsAppStartOptions) {
+        const { connection, lastDisconnect, qr } = update;
+        const allowPairingOnAuthFailure = options.allowPairingOnAuthFailure ?? true;
 
-        // msg.key.fromMe is always allowed
-        if (!msg || !msg.key.remoteJid) return;
+        if (qr) {
+            await this.handlePairingQr(qr);
+        }
 
-        // Ignore messages sent by Pi (marked with π)
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        if (text.endsWith('π')) return;
+        if (connection === 'close') {
+            await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
+            return;
+        }
 
-        const remoteJid = msg.key.remoteJid;
-        if (remoteJid.endsWith('@g.us')) return;
+        if (connection === 'open') {
+            await this.handleConnectionOpen();
+        }
+    }
 
-        const senderJid = this.normalizeContactNumber(remoteJid.split('@')[0]);
+    private async handlePairingQr(qr: string) {
+        this.sessionManager.setStatus('pairing');
+        this.onQRCode?.(qr);
+        this.onStatusUpdate?.('| WhatsApp: type /whatsapp to connect');
+    }
 
+    private async handleConnectionOpen() {
+        if (this.verboseMode) {
+            console.log('WhatsApp connection successfully opened');
+        }
+
+        this.isReconnecting = false;
+        this.clearReconnectTimeout();
+        await this.saveCreds?.();
+        await this.sessionManager.markAuthStateAvailable();
+        this.sessionManager.setStatus('connected');
+        this.onStatusUpdate?.('| WhatsApp: Connected');
+    }
+
+    private isBadMacError(errorMessage: string): boolean {
+        return errorMessage.includes('Bad MAC');
+    }
+
+    private isAuthRejected(statusCode: number | undefined, errorMessage: string): boolean {
+        return errorMessage.includes('bad-request')
+            || statusCode === 400
+            || statusCode === 401
+            || statusCode === DisconnectReason.loggedOut
+            || statusCode === DisconnectReason.badSession;
+    }
+
+    private async handleConnectionClosed(
+        lastDisconnect: LastDisconnectLike | undefined,
+        allowPairingOnAuthFailure: boolean,
+        options: WhatsAppStartOptions
+    ) {
+        const statusCode = this.getDisconnectStatusCode(lastDisconnect?.error);
+        const errorMessage = this.getErrorMessage(lastDisconnect?.error);
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const isBadMac = this.isBadMacError(errorMessage);
+        const isAuthRejected = this.isAuthRejected(statusCode, errorMessage);
+        const shouldTreatAsLoggedOut = isBadMac || isAuthRejected;
+
+        if (this.verboseMode) {
+            console.error(`Connection closed [${statusCode}]. Reconnecting: ${shouldReconnect}`);
+        }
+
+        if (shouldTreatAsLoggedOut) {
+            if (isAuthRejected && !isBadMac && allowPairingOnAuthFailure) {
+                if (this.verboseMode) {
+                    console.error(`Session rejected [${statusCode}] - clearing auth state and starting pairing`);
+                }
+                await this.sessionManager.deleteAuthState();
+                this.cleanupSocket();
+                this.socket = undefined;
+                this.isReconnecting = false;
+                await this.start({ allowPairingOnAuthFailure: false });
+                return;
+            }
+
+            if (this.verboseMode) {
+                console.error(`Session invalid or logged out [${statusCode}] - preserving auth state and requiring re-auth`);
+            }
+            if (isBadMac) {
+                if (this.verboseMode) {
+                    console.error('[WhatsApp-Pi] Bad MAC error detected. Your session keys are corrupted.');
+                    console.error('[WhatsApp-Pi] Run /whatsapp-logout to clear auth state, then reconnect with /whatsapp-connect');
+                }
+                this.onStatusUpdate?.('| WhatsApp: Session Error (Bad MAC)');
+            }
+            this.sessionManager.setStatus('logged-out');
+            if (!isBadMac) {
+                this.onStatusUpdate?.('| WhatsApp: Logged out');
+            }
+            return;
+        }
+
+        if (statusCode === DisconnectReason.connectionReplaced) {
+            if (this.verboseMode) {
+                console.error('Connection replaced - another instance connected');
+            }
+            this.onStatusUpdate?.('| WhatsApp: Conflict (Another Instance)');
+            return;
+        }
+
+        if (shouldReconnect && !this.isReconnecting) {
+            this.isReconnecting = true;
+            this.onStatusUpdate?.('| WhatsApp: Reconnecting...');
+            this.clearReconnectTimeout();
+            this.reconnectTimeout = setTimeout(() => {
+                this.isReconnecting = false;
+                void this.start(options);
+            }, 3000);
+        } else if (!shouldReconnect) {
+            this.sessionManager.setStatus('logged-out');
+            this.onStatusUpdate?.('| WhatsApp: Disconnected');
+        }
+    }
+
+    private extractText(message: IncomingMessageContent | undefined): string {
+        return message?.conversation || message?.extendedTextMessage?.text || '';
+    }
+
+    private isPiGeneratedMessage(text: string): boolean {
+        return text.endsWith('π');
+    }
+
+    private getIncomingTimestamp(timestamp: number | string | undefined): number {
+        if (typeof timestamp === 'number') {
+            return timestamp;
+        }
+
+        if (typeof timestamp === 'string') {
+            const parsed = Number(timestamp);
+            return Number.isFinite(parsed) ? parsed : Date.now();
+        }
+
+        return Date.now();
+    }
+
+    private async recordIncomingMessage(message: IncomingMessageLike, remoteJid: string, text: string) {
         void Promise.resolve(this.onIncomingMessageRecorded?.({
-            id: msg.key.id,
+            id: message.key.id ?? remoteJid,
             remoteJid,
-            pushName: msg.pushName || undefined,
+            pushName: message.pushName || undefined,
             text,
-            timestamp: typeof msg.messageTimestamp === 'number' ? Number(msg.messageTimestamp) : Date.now()
+            timestamp: this.getIncomingTimestamp(message.messageTimestamp)
         })).catch(error => {
             if (this.verboseMode) {
                 console.error('Failed to record recent message:', error);
             }
         });
-        
+    }
+
+    public async handleIncomingMessages(payload: MessagesUpsertEvent) {
+        if (this.sessionManager.getStatus() !== 'connected') return;
+
+        const message = payload.messages?.[0];
+        if (!message || !message.key.remoteJid) return;
+
+        const text = this.extractText(message.message);
+        if (this.isPiGeneratedMessage(text)) return;
+
+        const remoteJid = message.key.remoteJid;
+        if (remoteJid.endsWith('@g.us')) return;
+
+        const senderJid = this.normalizeContactNumber(remoteJid.split('@')[0]);
+        void this.recordIncomingMessage(message, remoteJid, text);
+
         if (this.sessionManager.isBlocked(senderJid)) {
             if (this.isVerbose()) {
                 console.log(`Ignoring message from ${senderJid} (explicitly blocked)`);
@@ -277,26 +452,20 @@ export class WhatsAppService {
             if (this.isVerbose()) {
                 console.log(`Ignoring message from ${senderJid} (not in allow list)`);
             }
-            // Track this number as ignored so user can allow it later
-            const pushName = msg.pushName || undefined;
+            const pushName = message.pushName || undefined;
             await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
             return;
         }
 
-        this.lastRemoteJid = msg.key.remoteJid;
-        this.onMessage?.(m);
+        this.lastRemoteJid = remoteJid;
+        this.onMessage?.(payload);
     }
-
-    private onQRCode?: (qr: string) => void;
-    private onMessage?: (m: any) => void;
-    private onStatusUpdate?: (status: string) => void;
-    private lastRemoteJid: string | null = null;
 
     setQRCodeCallback(callback: (qr: string) => void) {
         this.onQRCode = callback;
     }
 
-    setMessageCallback(callback: (m: any) => void) {
+    setMessageCallback(callback: (m: unknown) => void) {
         this.onMessage = callback;
     }
 
@@ -306,6 +475,14 @@ export class WhatsAppService {
 
     public getLastRemoteJid(): string | null {
         return this.lastRemoteJid;
+    }
+
+    private getActiveSocket(): WhatsAppSocketLike | null {
+        if (!this.socket || this.getStatus() !== 'connected') {
+            return null;
+        }
+
+        return this.socket;
     }
 
     async sendMessage(jid: string, text: string) {
@@ -323,20 +500,15 @@ export class WhatsAppService {
         if (!result.success) {
             console.error(`Failed to send message to ${jid}: ${result.error}`);
         }
-        
-        return result;
-    }
 
-    private normalizeRecipientJid(jid: string): string {
-        if (jid.includes('@')) return jid;
-        const digits = jid.startsWith('+') ? jid.slice(1) : jid;
-        return `${digits}@s.whatsapp.net`;
+        return result;
     }
 
     async sendMenuMessage(jid: string, text: string) {
         const normalizedJid = this.normalizeRecipientJid(jid);
+        const socket = this.getActiveSocket();
 
-        if (!this.socket || this.getStatus() !== 'connected') {
+        if (!socket) {
             return {
                 success: false,
                 error: 'WhatsApp is not connected',
@@ -346,7 +518,7 @@ export class WhatsAppService {
 
         try {
             await this.sendPresence(normalizedJid, 'composing');
-            const response = await this.socket.sendMessage(normalizedJid, { text });
+            const response = await socket.sendMessage(normalizedJid, { text });
             await this.sendPresence(normalizedJid, 'paused');
 
             return {
@@ -354,21 +526,22 @@ export class WhatsAppService {
                 messageId: response?.key?.id,
                 attempts: 1
             };
-        } catch (error: any) {
+        } catch (error: unknown) {
             await this.sendPresence(normalizedJid, 'paused');
             console.error(`Failed to send menu message to ${normalizedJid}:`, error);
             return {
                 success: false,
-                error: error?.message || 'Unknown error',
+                error: error instanceof Error ? error.message : 'Unknown error',
                 attempts: 1
             };
         }
     }
 
     async sendPresence(jid: string, presence: 'composing' | 'recording' | 'paused') {
-        if (!this.socket || this.getStatus() !== 'connected') return;
+        const socket = this.getActiveSocket();
+        if (!socket) return;
         try {
-            await this.socket.sendPresenceUpdate(presence, jid);
+            await socket.sendPresenceUpdate(presence, jid);
         } catch (error) {
             if (this.verboseMode) {
                 console.error(`Failed to send presence update to ${jid}:`, error);
@@ -377,9 +550,10 @@ export class WhatsAppService {
     }
 
     async markRead(jid: string, messageId: string, fromMe: boolean = false) {
-        if (!this.socket || this.getStatus() !== 'connected') return;
+        const socket = this.getActiveSocket();
+        if (!socket) return;
         try {
-            await this.socket.readMessages([{ remoteJid: jid, id: messageId, fromMe }]);
+            await socket.readMessages([{ remoteJid: jid, id: messageId, fromMe }]);
         } catch (error) {
             if (this.verboseMode) {
                 console.error(`Failed to mark message as read:`, error);
@@ -401,18 +575,8 @@ export class WhatsAppService {
             }
         }
 
-        if (this.socket) {
-            this.restoreBaileysConsoleFilter?.();
-            this.restoreBaileysConsoleFilter = undefined;
-            this.socket.ev.removeAllListeners('connection.update');
-            this.socket.ev.removeAllListeners('creds.update');
-            this.socket.ev.removeAllListeners('messages.upsert');
-            try {
-                this.socket.end(undefined);
-            } catch (e) {}
-            this.socket = undefined;
-            this.isReconnecting = false;
-        }
+        this.cleanupSocket();
+        this.isReconnecting = false;
         await this.sessionManager.setStatus('disconnected');
         this.onStatusUpdate?.('| WhatsApp: Disconnected');
     }

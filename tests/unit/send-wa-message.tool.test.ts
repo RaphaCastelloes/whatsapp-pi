@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Unit tests for the send_wa_message tool execute logic.
@@ -34,6 +34,18 @@ async function executeToolLogic(
         };
     }
 
+    const formattedMessage = params.message
+        .split('\n')
+        .map((line) => `    ${line}`)
+        .join('\n');
+
+    console.log([
+        '[WhatsApp-Pi] Outgoing WhatsApp message',
+        `  To: ${params.jid}`,
+        '  Message:',
+        formattedMessage
+    ].join('\n'));
+
     const result = await whatsappService.sendMessage(params.jid, params.message);
 
     if (result.success) {
@@ -44,6 +56,19 @@ async function executeToolLogic(
             direction: 'outgoing',
             timestamp: Date.now()
         });
+        console.log([
+            '[WhatsApp-Pi] Outgoing WhatsApp message result',
+            `  To: ${params.jid}`,
+            '  Status: sent',
+            `  MessageId: ${result.messageId ?? 'unknown'}`
+        ].join('\n'));
+    } else {
+        console.log([
+            '[WhatsApp-Pi] Outgoing WhatsApp message result',
+            `  To: ${params.jid}`,
+            '  Status: failed',
+            `  Error: ${result.error ?? 'unknown error'}`
+        ].join('\n'));
     }
 
     return {
@@ -55,8 +80,10 @@ async function executeToolLogic(
 describe('send_wa_message tool', () => {
     let whatsappService: MockWhatsAppService;
     let recentsService: MockRecentsService;
+    let logSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
+        logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         whatsappService = {
             getStatus: vi.fn().mockReturnValue('connected'),
             sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 })
@@ -64,6 +91,10 @@ describe('send_wa_message tool', () => {
         recentsService = {
             recordMessage: vi.fn().mockResolvedValue(undefined)
         };
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     describe('US2: structured feedback', () => {
@@ -82,6 +113,7 @@ describe('send_wa_message tool', () => {
             expect(parsed.error).toBe('WhatsApp not connected');
             expect(parsed.attempts).toBe(0);
             expect(whatsappService.sendMessage).not.toHaveBeenCalled();
+            expect(logSpy).not.toHaveBeenCalled();
         });
 
         it('returns success result with messageId when delivery succeeds', async () => {
@@ -97,6 +129,8 @@ describe('send_wa_message tool', () => {
             expect(parsed.messageId).toBe('MSG123');
             expect(parsed.attempts).toBe(1);
             expect(parsed.error).toBeUndefined();
+            expect(logSpy).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
+            expect(logSpy).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: sent\n  MessageId: MSG123');
         });
 
         it('returns failure result with error description when delivery fails', async () => {
@@ -118,6 +152,8 @@ describe('send_wa_message tool', () => {
             expect(parsed.error).toBe('Socket timed out');
             expect(parsed.attempts).toBe(3);
             expect(parsed.messageId).toBeUndefined();
+            expect(logSpy).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
+            expect(logSpy).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: failed\n  Error: Socket timed out');
         });
     });
 

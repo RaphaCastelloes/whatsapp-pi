@@ -176,7 +176,8 @@ describe('MenuHandler', () => {
         });
     });
 
-    it('prints allowed contact numbers to the TUI info console on separate lines', async () => {
+    it('prints allowed contact numbers to the console and TUI info output on separate lines', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowList.mockReturnValue([
             { number: '+5511999998888', name: 'Ana' },
@@ -209,6 +210,8 @@ describe('MenuHandler', () => {
         ]);
         expect(ctx.ui.notify).toHaveBeenCalledWith('+5511999998888', 'info');
         expect(ctx.ui.notify).toHaveBeenCalledWith('+5511999998888\n+553291297719', 'info');
+        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed numbers\n  • +5511999998888');
+        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed numbers\n  • +5511999998888\n  • +553291297719');
     });
 
     it('moves a blocked number to the allowed list using the displayed alias option', async () => {

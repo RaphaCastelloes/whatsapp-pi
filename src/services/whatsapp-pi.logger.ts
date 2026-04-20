@@ -5,6 +5,10 @@ export class WhatsAppPiLogger {
         this.verbose = verbose;
     }
 
+    info(message: string, ...args: unknown[]) {
+        console.log(message, ...args);
+    }
+
     log(message: string, ...args: unknown[]) {
         if (this.verbose) {
             console.log(message, ...args);

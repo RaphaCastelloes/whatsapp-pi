@@ -240,6 +240,18 @@ export default function (pi: ExtensionAPI) {
                 };
             }
 
+            const formattedMessage = params.message
+                .split('\n')
+                .map((line) => `    ${line}`)
+                .join('\n');
+
+            console.log([
+                '[WhatsApp-Pi] Outgoing WhatsApp message',
+                `  To: ${params.jid}`,
+                '  Message:',
+                formattedMessage
+            ].join('\n'));
+
             const result = await whatsappService.sendMessage(params.jid, params.message);
 
             if (result.success) {
@@ -250,6 +262,19 @@ export default function (pi: ExtensionAPI) {
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
+                console.log([
+                    '[WhatsApp-Pi] Outgoing WhatsApp message result',
+                    `  To: ${params.jid}`,
+                    '  Status: sent',
+                    `  MessageId: ${result.messageId ?? 'unknown'}`
+                ].join('\n'));
+            } else {
+                console.log([
+                    '[WhatsApp-Pi] Outgoing WhatsApp message result',
+                    `  To: ${params.jid}`,
+                    '  Status: failed',
+                    `  Error: ${result.error ?? 'unknown error'}`
+                ].join('\n'));
             }
 
             return {

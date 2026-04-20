@@ -175,6 +175,13 @@ export class MenuHandler {
 
     private printAllowedNumber(ctx: ExtensionCommandContext, number: string) {
         this.printedAllowedNumbers.push(number);
+        const output = this.printedAllowedNumbers
+            .map((entry) => `  • ${entry}`)
+            .join('\n');
+        console.log([
+            '[WhatsApp-Pi] Allowed numbers',
+            output
+        ].join('\n'));
         ctx.ui.notify(this.printedAllowedNumbers.join('\n'), 'info');
     }
 

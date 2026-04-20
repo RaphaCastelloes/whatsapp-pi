@@ -6,7 +6,7 @@ describe('WhatsAppPiLogger', () => {
         vi.restoreAllMocks();
     });
 
-    it('does not write logs when verbose is disabled', () => {
+    it('does not write verbose logs when verbose is disabled', () => {
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -21,7 +21,16 @@ describe('WhatsAppPiLogger', () => {
         expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it('writes logs when verbose is enabled', () => {
+    it('always writes info logs', () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const logger = new WhatsAppPiLogger(false);
+
+        logger.info('[WhatsApp-Pi] info');
+
+        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] info');
+    });
+
+    it('writes verbose logs when verbose is enabled', () => {
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const logger = new WhatsAppPiLogger(false);
 

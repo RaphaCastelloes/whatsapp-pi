@@ -39,7 +39,7 @@ export class MessageSender {
     public async send(request: MessageRequest): Promise<MessageResult> {
         const maxRetries = request.options?.maxRetries ?? 3;
         let attempts = 0;
-        let lastError: any = null;
+        let lastError: unknown = null;
 
         while (attempts < maxRetries) {
             attempts++;
@@ -61,15 +61,15 @@ export class MessageSender {
 
                 return {
                     success: true,
-                    messageId: response.key.id,
+                    messageId: response?.key?.id,
                     attempts
                 };
-            } catch (error: any) {
+            } catch (error: unknown) {
                 lastError = error;
-                console.error(`[MessageSender] Attempt ${attempts} failed for ${request.recipientJid}: ${error.message}`);
+                console.error(`[MessageSender] Attempt ${attempts} failed for ${request.recipientJid}: ${error instanceof Error ? error.message : String(error)}`);
                 
                 // Specific handling for non-retryable errors
-                if (error.code === 'TIMEOUT') {
+                if (error instanceof WhatsAppError && error.code === 'TIMEOUT') {
                     break;
                 }
 
@@ -86,7 +86,7 @@ export class MessageSender {
 
         return {
             success: false,
-            error: lastError?.message || 'Unknown error',
+            error: lastError instanceof Error ? lastError.message : 'Unknown error',
             attempts
         };
     }
