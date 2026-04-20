@@ -11,7 +11,8 @@ describe('MessageDetailView', () => {
             text: 'First line\nSecond line with emojis 🚀',
             direction: 'incoming',
             timestamp: new Date(2026, 3, 20, 10, 15, 30).getTime(),
-            onClose: vi.fn()
+            onClose: vi.fn(),
+            onReply: vi.fn()
         });
 
         const output = view.render(80).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
@@ -26,8 +27,27 @@ describe('MessageDetailView', () => {
         expect(output).toContain('Second');
         expect(output).toContain('line with');
         expect(output).toContain('emojis 🚀');
-        expect(output).toContain('Press Enter or Esc to return');
-        expect(output).toContain('Press Enter or Esc to return');
+        expect(output).toContain('Press R to reply');
+    });
+
+    it('opens reply flow when the user presses R', () => {
+        const onClose = vi.fn();
+        const onReply = vi.fn();
+        const view = new MessageDetailView({
+            title: 'Message • Ana',
+            messageId: 'MSG1',
+            senderNumber: '+5511999998888',
+            text: 'hello',
+            direction: 'incoming',
+            timestamp: Date.now(),
+            onClose,
+            onReply
+        });
+
+        view.handleInput('r');
+
+        expect(onReply).toHaveBeenCalledOnce();
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     it('closes when the user presses Enter or Escape', () => {

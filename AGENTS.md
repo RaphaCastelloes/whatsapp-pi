@@ -41,9 +41,9 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 017-message-reply: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 - 016-message-detail-view: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 - 011-whatsapp-recents: Added TypeScript 5.x on Node.js 20+ + `@whiskeysockets/baileys`, `pino`, `qrcode-terminal`, existing Pi extension APIs
-- 009-localize-system-messages: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`, `pino`
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -3,6 +3,7 @@ import { SessionManager, type Contact } from '../services/session.manager.js';
 import { validatePhoneNumber, type RecentConversationMessage, type RecentConversationSummary } from '../models/whatsapp.types.js';
 import { RecentsService } from '../services/recents.service.js';
 import { showMessageDetailView } from './message-detail.view.js';
+import { showMessageReplyView } from './message-reply.view.js';
 import * as qrcode from 'qrcode-terminal';
 import type { ExtensionCommandContext } from '@mariozechner/pi-coding-agent';
 
@@ -391,37 +392,50 @@ export class MenuHandler {
         displayName: string,
         senderName?: string
     ) {
-        while (true) {
-            const history = await this.recentsService.getConversationHistory(senderNumber);
+        const history = await this.recentsService.getConversationHistory(senderNumber);
 
-            if (history.length === 0) {
-                ctx.ui.notify('No message history available for this conversation.', 'info');
-                return;
-            }
+        if (history.length === 0) {
+            ctx.ui.notify('No message history available for this conversation.', 'info');
+            return;
+        }
 
-            const historyOptions = this.buildHistoryOptions(this.sortHistoryByMostRecent(history));
-            const choice = await ctx.ui.select(`History • ${displayName}`, [
-                ...historyOptions.map(option => option.label),
-                'Back'
-            ]);
+        const historyOptions = this.buildHistoryOptions(this.sortHistoryByMostRecent(history));
+        const choice = await ctx.ui.select(`History • ${displayName}`, [
+            ...historyOptions.map(option => option.label),
+            'Back'
+        ]);
 
-            if (!choice || choice === 'Back') {
-                return;
-            }
+        if (!choice || choice === 'Back') {
+            return;
+        }
 
-            const selectedMessage = this.resolveHistorySelection(choice, historyOptions);
-            if (!selectedMessage) {
-                continue;
-            }
+        const selectedMessage = this.resolveHistorySelection(choice, historyOptions);
+        if (!selectedMessage) {
+            return;
+        }
 
-            await showMessageDetailView(ctx, {
-                title: `Message • ${displayName}`,
-                messageId: selectedMessage.messageId,
-                senderNumber: selectedMessage.senderNumber,
-                senderName,
-                text: selectedMessage.text,
-                direction: selectedMessage.direction,
-                timestamp: selectedMessage.timestamp
+        const detailAction = await showMessageDetailView(ctx, {
+            title: `Message • ${displayName}`,
+            messageId: selectedMessage.messageId,
+            senderNumber: selectedMessage.senderNumber,
+            senderName,
+            text: selectedMessage.text,
+            direction: selectedMessage.direction,
+            timestamp: selectedMessage.timestamp
+        });
+
+        if (detailAction === 'reply') {
+            await showMessageReplyView(ctx, {
+                selectedMessage: {
+                    messageId: selectedMessage.messageId,
+                    senderNumber: selectedMessage.senderNumber,
+                    senderName,
+                    text: selectedMessage.text,
+                    direction: selectedMessage.direction,
+                    timestamp: selectedMessage.timestamp
+                },
+                whatsappService: this.whatsappService,
+                recentsService: this.recentsService
             });
         }
     }

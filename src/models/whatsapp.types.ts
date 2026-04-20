@@ -73,6 +73,28 @@ export interface RecentConversationSummary {
     isAllowed: boolean;
 }
 
+export interface SelectedMessageContext {
+    messageId: string;
+    senderNumber: string;
+    senderName?: string;
+    text: string;
+    direction: MessageDirection;
+    timestamp: number;
+}
+
+export interface ReplyDraft {
+    text: string;
+    targetMessageId: string;
+    targetConversation: string;
+}
+
+export interface ReplySendResult {
+    success: boolean;
+    messageId?: string;
+    error?: string;
+    attempts: number;
+}
+
 export interface RecentsStore {
     conversations: RecentConversationSummary[];
     messagesBySender: Record<string, RecentConversationMessage[]>;

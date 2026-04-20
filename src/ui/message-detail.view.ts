@@ -1,21 +1,23 @@
 import { matchesKey, truncateToWidth, wrapTextWithAnsi, visibleWidth } from '@mariozechner/pi-tui';
-import type { MessageDirection } from '../models/whatsapp.types.js';
+import type { SelectedMessageContext } from '../models/whatsapp.types.js';
 
-export interface MessageDetailViewProps {
+export interface MessageDetailViewProps extends SelectedMessageContext {
     title: string;
-    messageId: string;
-    senderNumber: string;
-    senderName?: string;
-    text: string;
-    direction: MessageDirection;
-    timestamp: number;
     onClose: () => void;
+    onReply?: () => void | Promise<void>;
 }
 
 export class MessageDetailView {
     constructor(private readonly props: MessageDetailViewProps) {}
 
     handleInput(data: string): void {
+        const normalized = data.toLowerCase();
+
+        if (normalized === 'r' || matchesKey(data, 'r')) {
+            void this.props.onReply?.();
+            return;
+        }
+
         if (
             data === 'enter' ||
             data === 'return' ||
@@ -63,7 +65,9 @@ export class MessageDetailView {
         const separator = `├${'─'.repeat(boxWidth - 2)}┤`;
         const bottomBorder = `╰${'─'.repeat(boxWidth - 2)}╯`;
         const bodyLines = wrapTextWithAnsi(bodyText, wrapWidth).filter(line => line.length > 0 || bodyText.length === 0);
-        const exitHint = `\x1b[90mPress Enter or Esc to return\x1b[39m`;
+        const exitHint = this.props.onReply
+            ? `\x1b[90mPress R to reply • Enter or Esc to return\x1b[39m`
+            : `\x1b[90mPress Enter or Esc to return\x1b[39m`;
 
         return [
             topBorder,
@@ -103,11 +107,12 @@ export async function showMessageDetailView(
         }
     },
     props: Omit<MessageDetailViewProps, 'onClose'>
-): Promise<void> {
-    await ctx.ui.custom<void>(
+): Promise<'reply' | undefined> {
+    return await ctx.ui.custom<'reply' | undefined>(
         (_tui, _theme, _keybindings, done) => new MessageDetailView({
             ...props,
-            onClose: () => done(undefined)
+            onClose: () => done(undefined),
+            onReply: () => done('reply')
         }),
         { overlay: true }
     );

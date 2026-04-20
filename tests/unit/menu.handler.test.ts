@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MenuHandler } from '../../src/ui/menu.handler.js';
 import { showMessageDetailView } from '../../src/ui/message-detail.view.js';
+import { showMessageReplyView } from '../../src/ui/message-reply.view.js';
 
 vi.mock('qrcode-terminal', () => ({
     generate: vi.fn()
@@ -8,6 +9,10 @@ vi.mock('qrcode-terminal', () => ({
 
 vi.mock('../../src/ui/message-detail.view.js', () => ({
     showMessageDetailView: vi.fn().mockResolvedValue(undefined)
+}));
+
+vi.mock('../../src/ui/message-reply.view.js', () => ({
+    showMessageReplyView: vi.fn().mockResolvedValue(undefined)
 }));
 
 type SelectChoice = string | ((title: string, options: string[]) => string);
@@ -315,6 +320,53 @@ describe('MenuHandler', () => {
             text: 'full message body',
             direction: 'incoming',
             timestamp: 1234567890
+        }));
+    });
+
+    it('opens the reply composer from the selected message context', async () => {
+        const { whatsappService, sessionManager, recentsService } = createServices();
+        recentsService.getRecentConversations.mockResolvedValue([{ 
+            senderNumber: '+5511999998888',
+            senderName: 'Ana',
+            lastMessagePreview: 'hello',
+            lastMessageTime: 1234567890,
+            lastMessageDirection: 'incoming',
+            messageCount: 1,
+            isAllowed: false
+        }]);
+        recentsService.getConversationHistory.mockResolvedValue([{ 
+            messageId: 'MSG1',
+            senderNumber: '+5511999998888',
+            text: 'full message body',
+            direction: 'incoming',
+            timestamp: 1234567890
+        }]);
+        const ctx = createContext({
+            selects: [
+                'Recents',
+                (_title, options) => options[0],
+                'History',
+                (_title, options) => options[0],
+                'Back',
+                'Back',
+                'Back'
+            ]
+        });
+        const handler = new MenuHandler(whatsappService as any, sessionManager as any, recentsService as any);
+
+        vi.mocked(showMessageDetailView).mockResolvedValueOnce('reply');
+
+        await handler.handleCommand(ctx as any);
+
+        expect(showMessageReplyView).toHaveBeenCalledWith(ctx as any, expect.objectContaining({
+            selectedMessage: expect.objectContaining({
+                messageId: 'MSG1',
+                senderNumber: '+5511999998888',
+                senderName: 'Ana',
+                text: 'full message body',
+                direction: 'incoming',
+                timestamp: 1234567890
+            })
         }));
     });
 
