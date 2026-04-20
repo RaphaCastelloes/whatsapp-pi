@@ -1,9 +1,15 @@
 import { WhatsAppService } from '../services/whatsapp.service.js';
 import { SessionManager, type Contact } from '../services/session.manager.js';
-import { validatePhoneNumber, type RecentConversationSummary } from '../models/whatsapp.types.js';
+import { validatePhoneNumber, type RecentConversationMessage, type RecentConversationSummary } from '../models/whatsapp.types.js';
 import { RecentsService } from '../services/recents.service.js';
+import { showMessageDetailView } from './message-detail.view.js';
 import * as qrcode from 'qrcode-terminal';
 import type { ExtensionCommandContext } from '@mariozechner/pi-coding-agent';
+
+interface HistoryOptionEntry {
+    label: string;
+    message: RecentConversationMessage;
+}
 
 export class MenuHandler {
     private readonly printedAllowedNumbers: string[] = [];
@@ -109,7 +115,7 @@ export class MenuHandler {
 
     private async manageAllowedContact(ctx: ExtensionCommandContext, contact: Contact) {
         const displayName = this.formatAllowedContactOption(contact);
-        const options = ['Send Message', 'Print Number', 'History'];
+        const options = ['History', 'Send Message', 'Print Number'];
         if (contact.name) {
             options.push('Remove Alias');
         } else {
@@ -263,13 +269,13 @@ export class MenuHandler {
     private async manageRecentConversation(ctx: ExtensionCommandContext, conversation: RecentConversationSummary) {
         const displayName = this.getConversationDisplayName(conversation);
         const allowedContact = this.sessionManager.getAllowedContact(conversation.senderNumber);
-        const options: string[] = [];
+        const options: string[] = ['History'];
 
         if (!allowedContact) {
             options.push('Allow Number');
         }
 
-        options.push('History', 'Send Message');
+        options.push('Send Message');
 
         if (allowedContact?.name) {
             options.push('Remove Alias');
@@ -371,27 +377,64 @@ export class MenuHandler {
     }
 
     private async showConversationHistory(ctx: ExtensionCommandContext, conversation: RecentConversationSummary) {
-        await this.showConversationHistoryForNumber(ctx, conversation.senderNumber, this.getConversationDisplayName(conversation));
+        await this.showConversationHistoryForNumber(
+            ctx,
+            conversation.senderNumber,
+            this.getConversationDisplayName(conversation),
+            conversation.senderName
+        );
     }
 
-    private async showConversationHistoryForNumber(ctx: ExtensionCommandContext, senderNumber: string, displayName: string) {
-        const history = await this.recentsService.getConversationHistory(senderNumber);
+    private async showConversationHistoryForNumber(
+        ctx: ExtensionCommandContext,
+        senderNumber: string,
+        displayName: string,
+        senderName?: string
+    ) {
+        while (true) {
+            const history = await this.recentsService.getConversationHistory(senderNumber);
 
-        if (history.length === 0) {
-            ctx.ui.notify('No message history available for this conversation.', 'info');
-            return;
+            if (history.length === 0) {
+                ctx.ui.notify('No message history available for this conversation.', 'info');
+                return;
+            }
+
+            const historyOptions = this.buildHistoryOptions(this.sortHistoryByMostRecent(history));
+            const choice = await ctx.ui.select(`History • ${displayName}`, [
+                ...historyOptions.map(option => option.label),
+                'Back'
+            ]);
+
+            if (!choice || choice === 'Back') {
+                return;
+            }
+
+            const selectedMessage = this.resolveHistorySelection(choice, historyOptions);
+            if (!selectedMessage) {
+                continue;
+            }
+
+            await showMessageDetailView(ctx, {
+                title: `Message • ${displayName}`,
+                messageId: selectedMessage.messageId,
+                senderNumber: selectedMessage.senderNumber,
+                senderName,
+                text: selectedMessage.text,
+                direction: selectedMessage.direction,
+                timestamp: selectedMessage.timestamp
+            });
         }
+    }
 
-        const options = [
-            ...this.sortHistoryByMostRecent(history)
-                .map(message => this.formatHistoryOption(message.timestamp, message.direction, message.text)),
-            'Back'
-        ];
+    private buildHistoryOptions(history: RecentConversationMessage[]): HistoryOptionEntry[] {
+        return history.map(message => ({
+            label: this.formatHistoryOption(message.timestamp, message.direction, message.text),
+            message
+        }));
+    }
 
-        const choice = await ctx.ui.select(`History • ${displayName}`, options);
-        if (choice === 'Back' || !choice) {
-            return;
-        }
+    private resolveHistorySelection(choice: string, options: HistoryOptionEntry[]): RecentConversationMessage | undefined {
+        return options.find(option => option.label === choice)?.message;
     }
 
     private formatRecentConversationOption(conversation: RecentConversationSummary): string {

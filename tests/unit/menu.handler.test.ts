@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MenuHandler } from '../../src/ui/menu.handler.js';
+import { showMessageDetailView } from '../../src/ui/message-detail.view.js';
 
 vi.mock('qrcode-terminal', () => ({
     generate: vi.fn()
+}));
+
+vi.mock('../../src/ui/message-detail.view.js', () => ({
+    showMessageDetailView: vi.fn().mockResolvedValue(undefined)
 }));
 
 type SelectChoice = string | ((title: string, options: string[]) => string);
@@ -201,9 +206,9 @@ describe('MenuHandler', () => {
         await handler.handleCommand(ctx as any);
 
         expect(ctx.ui.select).toHaveBeenCalledWith('Allowed Number • Ana (+5511999998888)', [
+            'History',
             'Send Message',
             'Print Number',
-            'History',
             'Remove Alias',
             'Remove Number',
             'Back'
@@ -231,7 +236,7 @@ describe('MenuHandler', () => {
 
     it('sends a message from recents without adding an extra Pi suffix', async () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
-        recentsService.getRecentConversations.mockResolvedValue([{
+        recentsService.getRecentConversations.mockResolvedValue([{ 
             senderNumber: '5511999998888@s.whatsapp.net',
             senderName: 'Ana',
             lastMessagePreview: 'hello',
@@ -268,6 +273,83 @@ describe('MenuHandler', () => {
             timestamp: 1234567890
         });
     });
+
+    it('opens a message detail view when a recent history item is selected', async () => {
+        const { whatsappService, sessionManager, recentsService } = createServices();
+        recentsService.getRecentConversations.mockResolvedValue([{ 
+            senderNumber: '+5511999998888',
+            senderName: 'Ana',
+            lastMessagePreview: 'hello',
+            lastMessageTime: 1234567890,
+            lastMessageDirection: 'incoming',
+            messageCount: 1,
+            isAllowed: false
+        }]);
+        recentsService.getConversationHistory.mockResolvedValue([{ 
+            messageId: 'MSG1',
+            senderNumber: '+5511999998888',
+            text: 'full message body',
+            direction: 'incoming',
+            timestamp: 1234567890
+        }]);
+        const ctx = createContext({
+            selects: [
+                'Recents',
+                (_title, options) => options[0],
+                'History',
+                (_title, options) => options[0],
+                'Back',
+                'Back',
+                'Back'
+            ]
+        });
+        const handler = new MenuHandler(whatsappService as any, sessionManager as any, recentsService as any);
+
+        await handler.handleCommand(ctx as any);
+
+        expect(showMessageDetailView).toHaveBeenCalledWith(ctx as any, expect.objectContaining({
+            title: 'Message • Ana (+5511999998888)',
+            messageId: 'MSG1',
+            senderNumber: '+5511999998888',
+            senderName: 'Ana',
+            text: 'full message body',
+            direction: 'incoming',
+            timestamp: 1234567890
+        }));
+    });
+
+    it('shows History first in the recents action menu', async () => {
+        const { whatsappService, sessionManager, recentsService } = createServices();
+        recentsService.getRecentConversations.mockResolvedValue([{
+            senderNumber: '+5511999998888',
+            senderName: 'Ana',
+            lastMessagePreview: 'hello',
+            lastMessageTime: 1234567890,
+            lastMessageDirection: 'incoming',
+            messageCount: 1,
+            isAllowed: false
+        }]);
+        const ctx = createContext({
+            selects: [
+                'Recents',
+                (_title, options) => options[0],
+                'Back',
+                'Back',
+                'Back'
+            ]
+        });
+        const handler = new MenuHandler(whatsappService as any, sessionManager as any, recentsService as any);
+
+        await handler.handleCommand(ctx as any);
+
+        expect(ctx.ui.select).toHaveBeenCalledWith('Recents • Ana (+5511999998888)', [
+            'History',
+            'Allow Number',
+            'Send Message',
+            'Back'
+        ]);
+    });
+
 
     it('shows recent conversation history options', async () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
