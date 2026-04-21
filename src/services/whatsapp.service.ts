@@ -3,7 +3,7 @@ import {
     DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore
-} from '@whiskeysockets/baileys';
+} from 'baileys';
 import P from 'pino';
 import { SessionManager } from './session.manager.js';
 import { IncomingMessage, SessionStatus } from '../models/whatsapp.types.js';

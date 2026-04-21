@@ -251,13 +251,24 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
-        description: "Send a WhatsApp message to a contact identified by their JID (e.g. 5511999998888@s.whatsapp.net). Returns a JSON result with success status and messageId or error.",
-        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message to a contact by JID",
+        description: "Send a WhatsApp message to a contact or group. The 'jid' parameter is the WhatsApp JID (e.g. 5511999998888@s.whatsapp.net for contacts, or 120363012345@g.us for groups). If omitted, replies to the last conversation.",
+        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message. jid is required (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us)",
         parameters: Type.Object({
-            jid: Type.String({ minLength: 1, description: "WhatsApp JID of the recipient, e.g. 5511999998888@s.whatsapp.net" }),
+            jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
+            recipient_jid: Type.Optional(Type.String({ description: "Alternative name for jid" })),
             message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+            // Resolve JID: jid > recipient_jid > lastRemoteJid
+            const resolvedJid = params.jid || params.recipient_jid || whatsappService.getLastRemoteJid();
+            if (!resolvedJid) {
+                return {
+                    isError: true,
+                    details: undefined,
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No JID provided and no active conversation to reply to", attempts: 0 }) }]
+                };
+            }
+
             if (whatsappService.getStatus() !== 'connected') {
                 return {
                     isError: true,
@@ -273,31 +284,33 @@ export default function (pi: ExtensionAPI) {
 
             console.log([
                 '[WhatsApp-Pi] Outgoing WhatsApp message',
-                `  To: ${params.jid}`,
+                `  To: ${resolvedJid}`,
                 '  Message:',
                 formattedMessage
             ].join('\n'));
 
-            const result = await whatsappService.sendMessage(params.jid, params.message);
+            const result = await whatsappService.sendMessage(resolvedJid, params.message);
 
             if (result.success) {
+                const isGroupJid = resolvedJid.endsWith('@g.us');
+                const senderNumber = isGroupJid ? resolvedJid : `+${resolvedJid.split('@')[0]}`;
                 await recentsService.recordMessage({
                     messageId: result.messageId!,
-                    senderNumber: `+${params.jid.split('@')[0]}`,
+                    senderNumber,
                     text: params.message,
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
                 console.log([
                     '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
+                    `  To: ${resolvedJid}`,
                     '  Status: sent',
                     `  MessageId: ${result.messageId ?? 'unknown'}`
                 ].join('\n'));
             } else {
                 console.log([
                     '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
+                    `  To: ${resolvedJid}`,
                     '  Status: failed',
                     `  Error: ${result.error ?? 'unknown error'}`
                 ].join('\n'));

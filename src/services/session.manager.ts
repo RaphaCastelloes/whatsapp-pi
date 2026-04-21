@@ -1,4 +1,4 @@
-import { useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { useMultiFileAuthState } from 'baileys';
 import { join } from 'path';
 import { readFile, writeFile, mkdir, rm, readdir } from 'fs/promises';
 import { homedir } from 'os';

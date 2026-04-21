@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
     writeFile: vi.fn().mockResolvedValue(undefined)
 }));
 
-vi.mock('@whiskeysockets/baileys', () => ({
+vi.mock('baileys', () => ({
     downloadContentFromMessage: mocks.downloadContentFromMessage
 }));
 
