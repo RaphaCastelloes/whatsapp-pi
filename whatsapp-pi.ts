@@ -30,6 +30,12 @@ export default function (pi: ExtensionAPI) {
         default: false
     });
 
+    pi.registerFlag("whatsapp-group", {
+        description: "Bind this agent to a specific WhatsApp group JID (e.g. 120363012345@g.us). When set, only messages from this group are processed.",
+        type: "string",
+        default: ""
+    });
+
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const recentsService = new RecentsService(sessionManager);
@@ -77,6 +83,15 @@ export default function (pi: ExtensionAPI) {
         whatsappService.setStatusCallback((status) => {
             ctx.ui.setStatus('whatsapp', status);
         });
+
+        // Set up group binding if configured
+        const boundGroupJid = (pi.getFlag("whatsapp-group") as string) || "";
+        if (boundGroupJid) {
+            whatsappService.setGroupBinding(boundGroupJid);
+            sessionManager.setGroupJidForAuth(boundGroupJid);
+            logger.log(`[WhatsApp-Pi] Group-only mode: bound to ${boundGroupJid}`);
+        }
+
         await sessionManager.ensureInitialized();
         await recentsService.ensureInitialized();
         installGracefulShutdownHandlers();
@@ -87,9 +102,13 @@ export default function (pi: ExtensionAPI) {
             }
         };
         whatsappService.setIncomingMessageRecorder(async (message) => {
+            const isGroup = message.remoteJid.endsWith('@g.us');
+            const senderNumber = isGroup
+                ? message.remoteJid
+                : `+${message.remoteJid.split('@')[0]}`;
             await recentsService.recordMessage({
                 messageId: message.id,
-                senderNumber: `+${message.remoteJid.split('@')[0]}`,
+                senderNumber,
                 senderName: message.pushName,
                 text: message.text || '',
                 direction: 'incoming',
@@ -168,11 +187,13 @@ export default function (pi: ExtensionAPI) {
         const msg = m.messages[0];
         if (!msg.message) return;
 
-        const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
+        const remoteJid = msg.key.remoteJid;
+        const isGroup = remoteJid?.endsWith('@g.us') || false;
+        const participant = isGroup ? (msg.key.participant?.split('@')[0] || 'unknown') : (remoteJid?.split('@')[0] || 'unknown');
+        const sender = remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
         // Mark as read and start typing indicator immediately
-        const remoteJid = msg.key.remoteJid;
         if (remoteJid && msg.key.id) {
             whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
             whatsappService.sendPresence(remoteJid, 'composing');
@@ -186,16 +207,21 @@ export default function (pi: ExtensionAPI) {
 
         const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
 
-        logger.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${text}`);
+        // Format message header with group context when applicable
+        const messageHeader = isGroup
+            ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
+            : `Message from ${pushName} (${sender}):`;
+
+        logger.log(`[WhatsApp-Pi] ${messageHeader} ${text}`);
 
         // Use a standard delivery for ALL messages to ensure TUI consistency
         if (imageBuffer && imageMimeType) {
             pi.sendUserMessage([
-                { type: "text", text: `Message from ${pushName} (${sender}): ${text}` },
+                { type: "text", text: `${messageHeader} ${text}` },
                 { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
             ], { deliverAs: "followUp" });
         } else {
-            pi.sendUserMessage(`Message from ${pushName} (${sender}): ${text}`, { deliverAs: "followUp" });
+            pi.sendUserMessage(`${messageHeader} ${text}`, { deliverAs: "followUp" });
         }
 
         // Handle commands

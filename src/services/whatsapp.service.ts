@@ -28,6 +28,7 @@ interface IncomingMessageKey {
     id?: string;
     remoteJid?: string;
     fromMe?: boolean;
+    participant?: string;
 }
 
 interface IncomingMessageContent {
@@ -85,10 +86,19 @@ export class WhatsAppService {
     private onMessage?: (m: unknown) => void;
     private onStatusUpdate?: (status: string) => void;
     private lastRemoteJid: string | null = null;
+    private boundGroupJid: string | null = null;
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
         this.messageSender = new MessageSender(this);
+    }
+
+    public setGroupBinding(groupJid: string) {
+        this.boundGroupJid = groupJid;
+    }
+
+    public getBoundGroupJid(): string | null {
+        return this.boundGroupJid;
     }
 
     public getStatus(): SessionStatus {
@@ -436,25 +446,35 @@ export class WhatsAppService {
         if (this.isPiGeneratedMessage(text)) return;
 
         const remoteJid = message.key.remoteJid;
-        if (remoteJid.endsWith('@g.us')) return;
+        const isGroup = remoteJid.endsWith('@g.us');
 
-        const senderJid = this.normalizeContactNumber(remoteJid.split('@')[0]);
-        void this.recordIncomingMessage(message, remoteJid, text);
-
-        if (this.sessionManager.isBlocked(senderJid)) {
-            if (this.isVerbose()) {
-                console.log(`Ignoring message from ${senderJid} (explicitly blocked)`);
-            }
-            return;
+        if (this.boundGroupJid) {
+            // Group-only mode: reject everything except the bound group
+            if (remoteJid !== this.boundGroupJid) return;
         }
 
-        if (!this.sessionManager.isAllowed(senderJid)) {
-            if (this.isVerbose()) {
-                console.log(`Ignoring message from ${senderJid} (not in allow list)`);
+        const senderJid = isGroup
+            ? remoteJid
+            : this.normalizeContactNumber(remoteJid.split('@')[0]);
+        void this.recordIncomingMessage(message, remoteJid, text);
+
+        // In group-only mode, skip allow/block checks — the binding is the authorization
+        if (!this.boundGroupJid) {
+            if (this.sessionManager.isBlocked(senderJid)) {
+                if (this.isVerbose()) {
+                    console.log(`Ignoring message from ${senderJid} (explicitly blocked)`);
+                }
+                return;
             }
-            const pushName = message.pushName || undefined;
-            await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
-            return;
+
+            if (!this.sessionManager.isAllowed(senderJid)) {
+                if (this.isVerbose()) {
+                    console.log(`Ignoring message from ${senderJid} (not in allow list)`);
+                }
+                const pushName = message.pushName || undefined;
+                await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
+                return;
+            }
         }
 
         this.lastRemoteJid = remoteJid;

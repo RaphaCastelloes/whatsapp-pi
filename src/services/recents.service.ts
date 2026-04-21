@@ -123,6 +123,8 @@ export class RecentsService {
     }
 
     private normalizeNumber(input: string): string {
+        // Group JIDs should be stored as-is
+        if (input.endsWith('@g.us')) return input;
         const cleaned = input.replace(/@s\.whatsapp\.net$/, '');
         if (cleaned.startsWith('+')) {
             return cleaned;
