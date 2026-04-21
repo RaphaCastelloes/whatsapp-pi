@@ -9,6 +9,14 @@ import { SessionManager } from './session.manager.js';
 import { IncomingMessage, SessionStatus } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
 import { installBaileysConsoleFilter } from './baileys-console-filter.js';
+import { appendFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+const LOG_FILE = join(homedir(), '.pi', 'whatsapp-pi', 'whatsapp-pi.log');
+function fileLog(msg: string) {
+    try { appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [WhatsApp-Pi] ${msg}\n`); } catch {}
+}
 
 export interface WhatsAppStartOptions {
     allowPairingOnAuthFailure?: boolean;
@@ -526,19 +534,19 @@ export class WhatsAppService {
      */
     public async prepareGroupSession(jid: string): Promise<void> {
         if (!jid.endsWith('@g.us')) return;
-        if (this.groupMetadataCache.has(jid)) return;
+        if (this.groupMetadataCache.has(jid)) {
+            fileLog(`Group metadata cache HIT for ${jid}`);
+            return;
+        }
         const socket = this.getActiveSocket();
         if (!socket) return;
         try {
+            fileLog(`Fetching group metadata for ${jid}...`);
             const metadata = await socket.groupMetadata(jid);
             this.groupMetadataCache.set(jid, metadata);
-            if (this.verboseMode) {
-                console.log(`[WhatsApp-Pi] Cached group metadata for ${jid} (${metadata.participants?.length ?? 0} participants)`);
-            }
+            fileLog(`Cached group metadata for ${jid} (${metadata.participants?.length ?? 0} participants)`);
         } catch (error) {
-            if (this.verboseMode) {
-                console.error(`[WhatsApp-Pi] Failed to pre-load group metadata for ${jid}:`, error);
-            }
+            fileLog(`FAILED to fetch group metadata for ${jid}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

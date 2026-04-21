@@ -1,5 +1,13 @@
 import { WhatsAppService } from './whatsapp.service.js';
 import { MessageRequest, MessageResult, WhatsAppError } from '../models/whatsapp.types.js';
+import { appendFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+const LOG_FILE = join(homedir(), '.pi', 'whatsapp-pi', 'whatsapp-pi.log');
+function fileLog(msg: string) {
+    try { appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [MessageSender] ${msg}\n`); } catch {}
+}
 
 export class MessageSender {
     private whatsappService: WhatsAppService;
@@ -67,6 +75,7 @@ export class MessageSender {
                     text: `${request.text} π` 
                 });
 
+                fileLog(`SUCCESS sending to ${request.recipientJid} on attempt ${attempts}`);
                 return {
                     success: true,
                     messageId: response?.key?.id,
@@ -75,6 +84,7 @@ export class MessageSender {
             } catch (error: unknown) {
                 lastError = error;
                 const errorMsg = error instanceof Error ? error.message : String(error);
+                fileLog(`Attempt ${attempts}/${maxRetries} FAILED for ${request.recipientJid}: ${errorMsg}`);
                 console.error(`[MessageSender] Attempt ${attempts} failed for ${request.recipientJid}: ${errorMsg}`);
                 
                 // Specific handling for non-retryable errors
@@ -89,6 +99,7 @@ export class MessageSender {
                     const isNoSessions = errorMsg.includes('No sessions');
                     const baseBackoff = (isGroup && isNoSessions) ? 5000 : 1000;
                     const backoff = Math.pow(2, attempts) * baseBackoff;
+                    fileLog(`Retrying in ${backoff / 1000}s...`);
                     console.log(`[MessageSender] Retrying in ${backoff / 1000}s...`);
                     await this.sleep(backoff);
                 }
