@@ -258,7 +258,7 @@ export default function (pi: ExtensionAPI) {
         name: "send_wa_message",
         label: "Send WhatsApp Message",
         description: "Send a WhatsApp message to a contact or group. The 'jid' parameter is the WhatsApp JID (e.g. 5511999998888@s.whatsapp.net for contacts, or 120363012345@g.us for groups). If omitted, replies to the last conversation.",
-        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message. jid is required (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us)",
+        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message. jid is required (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us). IMPORTANT: After calling this tool, do NOT generate any follow-up text or confirmation — the message is already delivered to WhatsApp. Your entire response to the user should be sent ONLY through this tool, not repeated in chat.",
         parameters: Type.Object({
             jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
             recipient_jid: Type.Optional(Type.String({ description: "Alternative name for jid" })),
