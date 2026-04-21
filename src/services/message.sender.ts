@@ -37,10 +37,12 @@ export class MessageSender {
      * @returns Promise resolving to a result object indicating success or failure.
      */
     public async send(request: MessageRequest): Promise<MessageResult> {
-        const maxRetries = request.options?.maxRetries ?? 3;
+        const isGroup = request.recipientJid.endsWith('@g.us');
+        // Groups need more retries because the first send bootstraps
+        // the Signal sender-key session (causes "No sessions" on first attempts)
+        const maxRetries = isGroup ? 5 : (request.options?.maxRetries ?? 3);
         let attempts = 0;
         let lastError: unknown = null;
-        const isGroup = request.recipientJid.endsWith('@g.us');
 
         while (attempts < maxRetries) {
             attempts++;
@@ -54,8 +56,8 @@ export class MessageSender {
                     throw new WhatsAppError('SOCKET_NOT_INIT', 'WhatsApp socket not initialized');
                 }
 
-                // 3. Pre-load group metadata to establish sender-key sessions
-                if (isGroup) {
+                // 3. Pre-load group metadata on first attempt
+                if (isGroup && attempts === 1) {
                     await this.whatsappService.prepareGroupSession(request.recipientJid);
                 }
 
@@ -72,20 +74,22 @@ export class MessageSender {
                 };
             } catch (error: unknown) {
                 lastError = error;
-                console.error(`[MessageSender] Attempt ${attempts} failed for ${request.recipientJid}: ${error instanceof Error ? error.message : String(error)}`);
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                console.error(`[MessageSender] Attempt ${attempts} failed for ${request.recipientJid}: ${errorMsg}`);
                 
                 // Specific handling for non-retryable errors
                 if (error instanceof WhatsAppError && error.code === 'TIMEOUT') {
                     break;
                 }
 
-                // 5. Backoff before retry (longer for groups to allow session establishment)
+                // 5. Backoff before retry
                 if (attempts < maxRetries) {
-                    const baseBackoff = isGroup ? 3000 : 1000;
+                    // "No sessions" in groups needs much longer waits —
+                    // Baileys syncs sender-keys in the background between retries
+                    const isNoSessions = errorMsg.includes('No sessions');
+                    const baseBackoff = (isGroup && isNoSessions) ? 5000 : 1000;
                     const backoff = Math.pow(2, attempts) * baseBackoff;
-                    if (this.whatsappService.isVerbose()) {
-                        console.log(`[MessageSender] Retrying in ${backoff}ms...`);
-                    }
+                    console.log(`[MessageSender] Retrying in ${backoff / 1000}s...`);
                     await this.sleep(backoff);
                 }
             }

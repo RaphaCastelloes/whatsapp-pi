@@ -59,7 +59,8 @@ interface WhatsAppSocketLike {
     sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } } | undefined>;
     sendPresenceUpdate(presence: 'composing' | 'recording' | 'paused', jid: string): Promise<void>;
     readMessages(messages: Array<{ remoteJid: string; id: string; fromMe: boolean }>): Promise<void>;
-    groupMetadata(jid: string): Promise<unknown>;
+    groupMetadata(jid: string): Promise<{ id: string; subject: string; participants: Array<{ id: string }> }>;
+    groupFetchAllParticipating(): Promise<Record<string, { id: string; subject: string; participants: Array<{ id: string }> }>>;
 }
 
 interface LastDisconnectLike {
@@ -92,6 +93,7 @@ export class WhatsAppService {
     private onStatusUpdate?: (status: string) => void;
     private lastRemoteJid: string | null = null;
     private boundGroupJid: string | null = null;
+    private groupMetadataCache: Map<string, { id: string; subject: string; participants: Array<{ id: string }> }> = new Map();
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
@@ -239,6 +241,8 @@ export class WhatsAppService {
 
         const logger = P({ level: this.verboseMode ? 'trace' : 'silent' });
 
+        const groupMetadataCache = this.groupMetadataCache;
+
         const socket = makeWASocket({
             version,
             printQRInTerminal: false,
@@ -247,7 +251,10 @@ export class WhatsAppService {
                 keys: makeCacheableSignalKeyStore(state.keys, logger)
             },
             syncFullHistory: false,
-            logger
+            logger,
+            cachedGroupMetadata: async (jid: string) => {
+                return groupMetadataCache.get(jid) as any;
+            }
         }) as WhatsAppSocketLike;
 
         return socket;
@@ -466,6 +473,12 @@ export class WhatsAppService {
             if (remoteJid !== this.boundGroupJid) return;
         }
 
+        // Eagerly cache group metadata on incoming messages so it's
+        // available for sender-key encryption when we reply
+        if (isGroup) {
+            void this.prepareGroupSession(remoteJid);
+        }
+
         const senderJid = isGroup
             ? remoteJid
             : this.normalizeContactNumber(remoteJid.split('@')[0]);
@@ -519,15 +532,21 @@ export class WhatsAppService {
     }
 
     /**
-     * Pre-loads group metadata to establish Signal sender-key sessions.
-     * This prevents "No sessions" errors on first send to a group.
+     * Pre-loads group metadata into the cache for Baileys' cachedGroupMetadata.
+     * This ensures Baileys can resolve group participants for Signal
+     * sender-key encryption, preventing "No sessions" errors.
      */
     public async prepareGroupSession(jid: string): Promise<void> {
         if (!jid.endsWith('@g.us')) return;
+        if (this.groupMetadataCache.has(jid)) return;
         const socket = this.getActiveSocket();
         if (!socket) return;
         try {
-            await socket.groupMetadata(jid);
+            const metadata = await socket.groupMetadata(jid);
+            this.groupMetadataCache.set(jid, metadata);
+            if (this.verboseMode) {
+                console.log(`[WhatsApp-Pi] Cached group metadata for ${jid} (${metadata.participants?.length ?? 0} participants)`);
+            }
         } catch (error) {
             if (this.verboseMode) {
                 console.error(`[WhatsApp-Pi] Failed to pre-load group metadata for ${jid}:`, error);
