@@ -105,6 +105,33 @@ describe('RecentsService', () => {
         ]);
     });
 
+    it('orders conversations by their latest message time', async () => {
+        const service = new RecentsService(sessionManager as any);
+        await service.ensureInitialized();
+
+        await service.recordMessage({
+            messageId: 'MSG1',
+            senderNumber: '+5511000000001',
+            senderName: 'First',
+            text: 'older',
+            direction: 'incoming',
+            timestamp: 1000
+        });
+        await service.recordMessage({
+            messageId: 'MSG2',
+            senderNumber: '+5511000000002',
+            senderName: 'Second',
+            text: 'newer',
+            direction: 'incoming',
+            timestamp: 2000
+        });
+
+        await expect(service.getRecentConversations()).resolves.toEqual([
+            expect.objectContaining({ senderNumber: '+5511000000002', lastMessagePreview: 'newer' }),
+            expect.objectContaining({ senderNumber: '+5511000000001', lastMessagePreview: 'older' })
+        ]);
+    });
+
     it('loads and normalizes existing recents from disk', async () => {
         fsMocks.readFile.mockResolvedValue(JSON.stringify({
             conversations: [{ senderNumber: '+5511999998888', senderName: 'Ana' }],

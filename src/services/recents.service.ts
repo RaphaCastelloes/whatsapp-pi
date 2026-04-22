@@ -93,22 +93,36 @@ export class RecentsService {
         const summaries = new Map<string, RecentConversationSummary>();
 
         for (const [senderNumber, messages] of Object.entries(this.store.messagesBySender)) {
-            if (messages.length === 0) continue;
-            const lastMessage = messages[messages.length - 1];
+            const latestMessage = this.getLatestConversationMessage(messages);
+            if (!latestMessage) continue;
+
             summaries.set(senderNumber, {
                 senderNumber,
                 senderName: previousNames.get(senderNumber),
-                lastMessagePreview: this.buildPreview(lastMessage.text),
-                lastMessageTime: lastMessage.timestamp,
-                lastMessageDirection: lastMessage.direction,
+                lastMessagePreview: this.buildPreview(latestMessage.text),
+                lastMessageTime: latestMessage.timestamp,
+                lastMessageDirection: latestMessage.direction,
                 messageCount: messages.length,
                 isAllowed: this.sessionManager.isAllowed(senderNumber)
             });
         }
 
-        this.store.conversations = Array.from(summaries.values())
-            .sort((left, right) => right.lastMessageTime - left.lastMessageTime)
+        this.store.conversations = this.sortConversationsByLatestMessage(Array.from(summaries.values()))
             .slice(0, 20);
+    }
+
+    private getLatestConversationMessage(messages: RecentConversationMessage[]): RecentConversationMessage | undefined {
+        return messages[messages.length - 1];
+    }
+
+    private sortConversationsByLatestMessage(conversations: RecentConversationSummary[]): RecentConversationSummary[] {
+        return [...conversations].sort((left, right) => {
+            if (right.lastMessageTime !== left.lastMessageTime) {
+                return right.lastMessageTime - left.lastMessageTime;
+            }
+
+            return left.senderNumber.localeCompare(right.senderNumber);
+        });
     }
 
     private buildPreview(text: string): string {
@@ -172,12 +186,10 @@ export class RecentsService {
             isAllowed: this.sessionManager.isAllowed(senderNumber)
         };
 
-        this.store.conversations = [
+        this.store.conversations = this.sortConversationsByLatestMessage([
             summary,
             ...this.store.conversations.filter(item => item.senderNumber !== senderNumber)
-        ]
-            .sort((left, right) => right.lastMessageTime - left.lastMessageTime)
-            .slice(0, 20);
+        ]).slice(0, 20);
 
         await this.persistStore();
     }
