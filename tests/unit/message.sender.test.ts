@@ -5,7 +5,8 @@ describe('MessageSender', () => {
     const whatsappService = {
         getStatus: vi.fn(),
         getSocket: vi.fn(),
-        isVerbose: vi.fn()
+        isVerbose: vi.fn(),
+        prepareGroupSession: vi.fn().mockResolvedValue(undefined)
     };
 
     beforeEach(() => {
@@ -55,7 +56,7 @@ describe('MessageSender', () => {
         vi.useRealTimers();
     });
 
-    it('logs retry delay in verbose mode', async () => {
+    it('logs retry delay when send fails', async () => {
         vi.useFakeTimers();
         whatsappService.getSocket.mockReturnValue(undefined);
         whatsappService.isVerbose.mockReturnValue(true);
@@ -70,7 +71,7 @@ describe('MessageSender', () => {
         await vi.advanceTimersByTimeAsync(2000);
         await resultPromise;
 
-        expect(console.log).toHaveBeenCalledWith('[MessageSender] Retrying in 2000ms...');
+        expect(console.log).toHaveBeenCalledWith('[MessageSender] Retrying in 2s...');
         vi.useRealTimers();
     });
 });

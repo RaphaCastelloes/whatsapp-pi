@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.11.0",
+    "baileys": "^6.7.21",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"
   },

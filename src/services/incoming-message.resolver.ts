@@ -1,4 +1,4 @@
-import { extractMessageContent } from '@whiskeysockets/baileys';
+import { extractMessageContent } from 'baileys';
 
 export type IncomingResolution =
     | { kind: 'text'; text: string }

@@ -456,7 +456,9 @@ export class MenuHandler {
     }
 
     private formatAllowedContactOption(contact: Contact): string {
-        return contact.name ? `${contact.name} (${contact.number})` : contact.number;
+        const isGroup = SessionManager.isGroupJid(contact.number);
+        const prefix = isGroup ? '[Group] ' : '';
+        return contact.name ? `${prefix}${contact.name} (${contact.number})` : `${prefix}${contact.number}`;
     }
 
     private sortContactsAlphabetically(contacts: Contact[]): Contact[] {
@@ -513,7 +515,9 @@ export class MenuHandler {
     private getConversationDisplayName(conversation: RecentConversationSummary): string {
         const allowedContact = this.sessionManager.getAllowedContact(conversation.senderNumber);
         const displayName = allowedContact?.name || conversation.senderName;
-        return displayName ? `${displayName} (${conversation.senderNumber})` : conversation.senderNumber;
+        const isGroup = SessionManager.isGroupJid(conversation.senderNumber);
+        const prefix = isGroup ? '[Group] ' : '';
+        return displayName ? `${prefix}${displayName} (${conversation.senderNumber})` : `${prefix}${conversation.senderNumber}`;
     }
 
     private formatDateTime(timestamp: number): string {

@@ -30,6 +30,12 @@ export default function (pi: ExtensionAPI) {
         default: false
     });
 
+    pi.registerFlag("whatsapp-group", {
+        description: "Bind this agent to a specific WhatsApp group JID (e.g. 120363012345@g.us). When set, only messages from this group are processed.",
+        type: "string",
+        default: ""
+    });
+
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const recentsService = new RecentsService(sessionManager);
@@ -77,6 +83,15 @@ export default function (pi: ExtensionAPI) {
         whatsappService.setStatusCallback((status) => {
             ctx.ui.setStatus('whatsapp', status);
         });
+
+        // Set up group binding if configured
+        const boundGroupJid = (pi.getFlag("whatsapp-group") as string) || "";
+        if (boundGroupJid) {
+            whatsappService.setGroupBinding(boundGroupJid);
+            sessionManager.setGroupJidForAuth(boundGroupJid);
+            logger.log(`[WhatsApp-Pi] Group-only mode: bound to ${boundGroupJid}`);
+        }
+
         await sessionManager.ensureInitialized();
         await recentsService.ensureInitialized();
         installGracefulShutdownHandlers();
@@ -87,9 +102,13 @@ export default function (pi: ExtensionAPI) {
             }
         };
         whatsappService.setIncomingMessageRecorder(async (message) => {
+            const isGroup = message.remoteJid.endsWith('@g.us');
+            const senderNumber = isGroup
+                ? message.remoteJid
+                : `+${message.remoteJid.split('@')[0]}`;
             await recentsService.recordMessage({
                 messageId: message.id,
-                senderNumber: `+${message.remoteJid.split('@')[0]}`,
+                senderNumber,
                 senderName: message.pushName,
                 text: message.text || '',
                 direction: 'incoming',
@@ -163,20 +182,28 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
+    // Track whether send_wa_message tool already sent a reply this turn
+    let toolSentToJid: string | null = null;
+
     // Handle incoming messages by injecting them as user prompts
     whatsappService.setMessageCallback(async (m) => {
         const msg = m.messages[0];
         if (!msg.message) return;
 
-        const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
+        const remoteJid = msg.key.remoteJid;
+        const isGroup = remoteJid?.endsWith('@g.us') || false;
+        const participant = isGroup ? (msg.key.participant?.split('@')[0] || 'unknown') : (remoteJid?.split('@')[0] || 'unknown');
+        const sender = remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
         // Mark as read and start typing indicator immediately
-        const remoteJid = msg.key.remoteJid;
         if (remoteJid && msg.key.id) {
             whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
             whatsappService.sendPresence(remoteJid, 'composing');
         }
+
+        // Reset tool-sent flag for this new incoming message
+        toolSentToJid = null;
 
         const resolved = extractIncomingText(msg.message);
         if (resolved.kind === 'system') {
@@ -186,16 +213,21 @@ export default function (pi: ExtensionAPI) {
 
         const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
 
-        logger.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${text}`);
+        // Format message header with group context when applicable
+        const messageHeader = isGroup
+            ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
+            : `Message from ${pushName} (${sender}):`;
+
+        logger.log(`[WhatsApp-Pi] ${messageHeader} ${text}`);
 
         // Use a standard delivery for ALL messages to ensure TUI consistency
         if (imageBuffer && imageMimeType) {
             pi.sendUserMessage([
-                { type: "text", text: `Message from ${pushName} (${sender}): ${text}` },
+                { type: "text", text: `${messageHeader} ${text}` },
                 { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
             ], { deliverAs: "followUp" });
         } else {
-            pi.sendUserMessage(`Message from ${pushName} (${sender}): ${text}`, { deliverAs: "followUp" });
+            pi.sendUserMessage(`${messageHeader} ${text}`, { deliverAs: "followUp" });
         }
 
         // Handle commands
@@ -225,13 +257,24 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
-        description: "Send a WhatsApp message to a contact identified by their JID (e.g. 5511999998888@s.whatsapp.net). Returns a JSON result with success status and messageId or error.",
-        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message to a contact by JID",
+        description: "Send a WhatsApp message to a contact or group. The 'jid' parameter is the WhatsApp JID (e.g. 5511999998888@s.whatsapp.net for contacts, or 120363012345@g.us for groups). If omitted, replies to the last conversation.",
+        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message. jid is required (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us). IMPORTANT: After calling this tool, do NOT generate any follow-up text or confirmation — the message is already delivered to WhatsApp. Your entire response to the user should be sent ONLY through this tool, not repeated in chat.",
         parameters: Type.Object({
-            jid: Type.String({ minLength: 1, description: "WhatsApp JID of the recipient, e.g. 5511999998888@s.whatsapp.net" }),
+            jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
+            recipient_jid: Type.Optional(Type.String({ description: "Alternative name for jid" })),
             message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+            // Resolve JID: jid > recipient_jid > lastRemoteJid
+            const resolvedJid = params.jid || params.recipient_jid || whatsappService.getLastRemoteJid();
+            if (!resolvedJid) {
+                return {
+                    isError: true,
+                    details: undefined,
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No JID provided and no active conversation to reply to", attempts: 0 }) }]
+                };
+            }
+
             if (whatsappService.getStatus() !== 'connected') {
                 return {
                     isError: true,
@@ -247,31 +290,35 @@ export default function (pi: ExtensionAPI) {
 
             console.log([
                 '[WhatsApp-Pi] Outgoing WhatsApp message',
-                `  To: ${params.jid}`,
+                `  To: ${resolvedJid}`,
                 '  Message:',
                 formattedMessage
             ].join('\n'));
 
-            const result = await whatsappService.sendMessage(params.jid, params.message);
+            const result = await whatsappService.sendMessage(resolvedJid, params.message);
 
             if (result.success) {
+                // Mark that tool already sent to this JID — prevents message_end from re-sending
+                toolSentToJid = resolvedJid;
+                const isGroupJid = resolvedJid.endsWith('@g.us');
+                const senderNumber = isGroupJid ? resolvedJid : `+${resolvedJid.split('@')[0]}`;
                 await recentsService.recordMessage({
                     messageId: result.messageId!,
-                    senderNumber: `+${params.jid.split('@')[0]}`,
+                    senderNumber,
                     text: params.message,
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
                 console.log([
                     '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
+                    `  To: ${resolvedJid}`,
                     '  Status: sent',
                     `  MessageId: ${result.messageId ?? 'unknown'}`
                 ].join('\n'));
             } else {
                 console.log([
                     '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
+                    `  To: ${resolvedJid}`,
                     '  Status: failed',
                     `  Error: ${result.error ?? 'unknown error'}`
                 ].join('\n'));
@@ -284,6 +331,9 @@ export default function (pi: ExtensionAPI) {
             };
         }
     });
+
+    // Suppress automatic message_end reply when tool already sent
+    // This is checked by the message_end handler below
 
     // Register commands
     pi.registerCommand("whatsapp", {
@@ -317,6 +367,12 @@ export default function (pi: ExtensionAPI) {
         if (message.role === "assistant") {
             const lastJid = whatsappService.getLastRemoteJid();
             const text = message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+
+            // Skip if send_wa_message tool already sent a reply to this JID
+            if (toolSentToJid === lastJid) {
+                toolSentToJid = null;
+                return;
+            }
 
             if (lastJid && text) {
                 try {

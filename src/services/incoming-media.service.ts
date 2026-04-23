@@ -1,4 +1,4 @@
-import { downloadContentFromMessage } from '@whiskeysockets/baileys';
+import { downloadContentFromMessage } from 'baileys';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AudioService } from './audio.service.js';

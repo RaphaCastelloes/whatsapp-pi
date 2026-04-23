@@ -17,7 +17,7 @@ const baileysMocks = vi.hoisted(() => {
     };
 });
 
-vi.mock('@whiskeysockets/baileys', () => ({
+vi.mock('baileys', () => ({
     makeWASocket: baileysMocks.makeWASocket,
     fetchLatestBaileysVersion: baileysMocks.fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore: baileysMocks.makeCacheableSignalKeyStore,

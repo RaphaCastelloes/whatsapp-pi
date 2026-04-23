@@ -1,4 +1,4 @@
-import { useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { useMultiFileAuthState } from 'baileys';
 import { join } from 'path';
 import { readFile, writeFile, mkdir, rm, readdir } from 'fs/promises';
 import { homedir } from 'os';
@@ -12,8 +12,21 @@ export interface Contact {
 export class SessionManager {
     // Data is stored in the user's home directory to persist across updates
     private readonly baseDir = join(homedir(), '.pi', 'whatsapp-pi');
-    private readonly authStateDir = join(this.baseDir, 'auth');
+    private authStateDir = join(this.baseDir, 'auth');
     private readonly configPath = join(this.baseDir, 'config.json');
+
+    static isGroupJid(jid: string): boolean {
+        return jid.endsWith('@g.us');
+    }
+
+    /**
+     * Sets a group-specific auth directory so each agent bound to a group
+     * registers as its own WhatsApp linked device.
+     */
+    setGroupJidForAuth(groupJid: string) {
+        const sanitized = groupJid.replace(/[^a-zA-Z0-9]/g, '_');
+        this.authStateDir = join(this.baseDir, `auth-${sanitized}`);
+    }
 
     private status: SessionStatus = 'logged-out';
     private allowList: Contact[] = [];

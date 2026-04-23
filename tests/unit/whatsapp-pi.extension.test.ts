@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => {
         setStatus: vi.fn().mockResolvedValue(undefined),
         addNumber: vi.fn().mockResolvedValue(undefined),
         getStatus: vi.fn().mockReturnValue('connected'),
-        getAllowList: vi.fn().mockReturnValue([{ number: '+5511999998888', name: 'Ana' }])
+        getAllowList: vi.fn().mockReturnValue([{ number: '+5511999998888', name: 'Ana' }]),
+        setGroupJidForAuth: vi.fn()
     });
 
     const createWhatsAppService = () => ({
@@ -15,6 +16,8 @@ const mocks = vi.hoisted(() => {
         setStatusCallback: vi.fn(),
         setIncomingMessageRecorder: vi.fn(),
         setMessageCallback: vi.fn(),
+        setGroupBinding: vi.fn(),
+        getBoundGroupJid: vi.fn().mockReturnValue(null),
         getStatus: vi.fn().mockReturnValue('connected'),
         isVerbose: vi.fn().mockReturnValue(false),
         isRegistered: vi.fn(),
@@ -159,6 +162,7 @@ describe('whatsapp-pi extension', () => {
 
         expect(pi.flags.has('verbose')).toBe(true);
         expect(pi.flags.has('whatsapp-pi-online')).toBe(true);
+        expect(pi.flags.has('whatsapp-group')).toBe(true);
         expect(pi.commands.has('whatsapp')).toBe(true);
         expect(pi.tools.has('send_wa_message')).toBe(true);
         expect(pi.handlers.has('session_start')).toBe(true);
@@ -311,5 +315,59 @@ describe('whatsapp-pi extension', () => {
             attempts: 0
         });
         expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('sets group binding on session_start when whatsapp-group flag is set', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        const ctx = createMockContext();
+        pi.getFlag.mockImplementation((name: string) => {
+            if (name === 'whatsapp-group') return '120363012345@g.us';
+            return false;
+        });
+
+        registerExtension(pi as any);
+        await pi.handlers.get('session_start')!({ reason: 'manual' }, ctx);
+
+        expect(mocks.whatsappService.setGroupBinding).toHaveBeenCalledWith('120363012345@g.us');
+        expect(mocks.sessionManager.setGroupJidForAuth).toHaveBeenCalledWith('120363012345@g.us');
+    });
+
+    it('does not set group binding when whatsapp-group flag is empty', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        const ctx = createMockContext();
+        pi.getFlag.mockReturnValue(false);
+
+        registerExtension(pi as any);
+        await pi.handlers.get('session_start')!({ reason: 'manual' }, ctx);
+
+        expect(mocks.whatsappService.setGroupBinding).not.toHaveBeenCalled();
+    });
+
+    it('formats group messages with participant info in the prompt', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+
+        registerExtension(pi as any);
+        const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+
+        await messageCallback({
+            messages: [{
+                key: {
+                    id: 'WA-GRP-1',
+                    remoteJid: '120363012345@g.us',
+                    participant: '5511999998888@s.whatsapp.net',
+                    fromMe: false
+                },
+                pushName: 'Ana',
+                message: { conversation: 'hello group' }
+            }]
+        });
+
+        expect(pi.sendUserMessage).toHaveBeenCalledWith(
+            'Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp',
+            { deliverAs: 'followUp' }
+        );
     });
 });
