@@ -1,6 +1,6 @@
 ﻿# whatsapp-pi Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-21
+Auto-generated from all feature plans. Last updated: 2026-04-28
 
 ## Active Technologies
 - [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION] (002-manual-whatsapp-connection)
@@ -24,6 +24,8 @@ Auto-generated from all feature plans. Last updated: 2026-04-21
 - Existing local recents store at `~/.pi/whatsapp-pi/recents/recents.json`; no new persistent storage (016-message-detail-view)
 - TypeScript 5.x on Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal` (019-seria-possivel-fazer)
 - Local file-based recents store under `~/.pi/whatsapp-pi/recents/recents.json` (019-seria-possivel-fazer)
+- TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `vitest`, `typescript`, Node built-ins (`fs`, `fs/promises`, `child_process`, `os`, `path`) (021-increase-unit-test)
+- Existing local media directory under `~/.pi/whatsapp-medias`; tests should mock file access and not depend on real files (021-increase-unit-test)
 
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `qrcode-terminal`, `pi-agent-sdk` (assumed name for Pi extension API) (001-whatsapp-tui-integration)
 
@@ -43,9 +45,9 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 021-increase-unit-test: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `vitest`, `typescript`, Node built-ins (`fs`, `fs/promises`, `child_process`, `os`, `path`)
 - 019-seria-possivel-fazer: Added TypeScript 5.x on Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 - 017-message-reply: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
-- 016-message-detail-view: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 
 
 <!-- MANUAL ADDITIONS START -->

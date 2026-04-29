@@ -82,7 +82,7 @@ export class WhatsAppService {
     private restoreBaileysConsoleFilter?: () => void;
     private reconnectTimeout?: ReturnType<typeof setTimeout>;
     private onQRCode?: (qr: string) => void;
-    private onMessage?: (m: unknown) => void;
+    private onMessage?: (m: MessagesUpsertEvent) => void;
     private onStatusUpdate?: (status: string) => void;
     private lastRemoteJid: string | null = null;
 
@@ -465,7 +465,7 @@ export class WhatsAppService {
         this.onQRCode = callback;
     }
 
-    setMessageCallback(callback: (m: unknown) => void) {
+    setMessageCallback(callback: (m: MessagesUpsertEvent) => void) {
         this.onMessage = callback;
     }
 

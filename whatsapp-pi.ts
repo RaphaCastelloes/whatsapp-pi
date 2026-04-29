@@ -165,8 +165,8 @@ export default function (pi: ExtensionAPI) {
 
     // Handle incoming messages by injecting them as user prompts
     whatsappService.setMessageCallback(async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message) return;
+        const msg = m.messages?.[0];
+        if (!msg?.message) return;
 
         const sender = msg.key.remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
