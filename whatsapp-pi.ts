@@ -8,6 +8,7 @@ import { AudioService } from './src/services/audio.service.js';
 import { extractIncomingText } from './src/services/incoming-message.resolver.js';
 import { IncomingMediaService } from './src/services/incoming-media.service.js';
 import { WhatsAppPiLogger } from './src/services/whatsapp-pi.logger.js';
+import { initI18n, t } from './src/i18n.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -17,6 +18,8 @@ const shutdownState = globalThis as typeof globalThis & {
 };
 
 export default function (pi: ExtensionAPI) {
+    initI18n(pi);
+
     // Register verbose flag
     pi.registerFlag("verbose", {
         description: "Enable verbose mode (show Baileys trace logs)",
@@ -224,19 +227,19 @@ export default function (pi: ExtensionAPI) {
     // Register send_wa_message tool (LLM-callable)
     pi.registerTool({
         name: "send_wa_message",
-        label: "Send WhatsApp Message",
-        description: "Send a WhatsApp message to a contact identified by their JID (e.g. 5511999998888@s.whatsapp.net). Returns a JSON result with success status and messageId or error.",
-        promptSnippet: "send_wa_message(jid, message) - Send a WhatsApp message to a contact by JID",
+        label: t("tool.label"),
+        description: t("tool.description"),
+        promptSnippet: t("tool.promptSnippet"),
         parameters: Type.Object({
-            jid: Type.String({ minLength: 1, description: "WhatsApp JID of the recipient, e.g. 5511999998888@s.whatsapp.net" }),
-            message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
+            jid: Type.String({ minLength: 1, description: t("tool.param.jid") }),
+            message: Type.String({ minLength: 1, description: t("tool.param.message") })
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
             if (whatsappService.getStatus() !== 'connected') {
                 return {
                     isError: true,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "WhatsApp not connected", attempts: 0 }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: t("tool.error.notConnected"), attempts: 0 }) }]
                 };
             }
 
@@ -246,9 +249,9 @@ export default function (pi: ExtensionAPI) {
                 .join('\n');
 
             console.log([
-                '[WhatsApp-Pi] Outgoing WhatsApp message',
-                `  To: ${params.jid}`,
-                '  Message:',
+                t("log.outgoing.title"),
+                t("log.outgoing.to", { jid: params.jid }),
+                t("log.outgoing.message"),
                 formattedMessage
             ].join('\n'));
 
@@ -263,17 +266,17 @@ export default function (pi: ExtensionAPI) {
                     timestamp: Date.now()
                 });
                 console.log([
-                    '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
-                    '  Status: sent',
-                    `  MessageId: ${result.messageId ?? 'unknown'}`
+                    t("log.result.title"),
+                    t("log.outgoing.to", { jid: params.jid }),
+                    t("log.result.status.sent"),
+                    t("log.result.messageId", { messageId: result.messageId ?? t("log.unknownMessageId") })
                 ].join('\n'));
             } else {
                 console.log([
-                    '[WhatsApp-Pi] Outgoing WhatsApp message result',
-                    `  To: ${params.jid}`,
-                    '  Status: failed',
-                    `  Error: ${result.error ?? 'unknown error'}`
+                    t("log.result.title"),
+                    t("log.outgoing.to", { jid: params.jid }),
+                    t("log.result.status.failed"),
+                    t("log.result.error", { error: result.error ?? t("log.unknownError") })
                 ].join('\n'));
             }
 
@@ -287,7 +290,7 @@ export default function (pi: ExtensionAPI) {
 
     // Register commands
     pi.registerCommand("whatsapp", {
-        description: "Manage WhatsApp integration",
+        description: t("command.whatsapp.description"),
         handler: async (args, ctx) => {
             _ctx = ctx;
             await menuHandler.handleCommand(ctx);
@@ -329,12 +332,12 @@ export default function (pi: ExtensionAPI) {
                             direction: 'outgoing',
                             timestamp: Date.now()
                         });
-                        ctx.ui.notify(`Sent reply to WhatsApp contact`, 'info');
+                        ctx.ui.notify(t("notify.replySent"), 'info');
                     } else {
-                        ctx.ui.notify(`Failed to send WhatsApp reply`, 'error');
+                        ctx.ui.notify(t("notify.replyFailed"), 'error');
                     }
                 } catch (error) {
-                    ctx.ui.notify(`Failed to send WhatsApp reply`, 'error');
+                    ctx.ui.notify(t("notify.replyFailed"), 'error');
                 }
             }
         }
