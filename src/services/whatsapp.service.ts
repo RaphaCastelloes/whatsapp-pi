@@ -295,7 +295,7 @@ export class WhatsAppService {
     private async handlePairingQr(qr: string) {
         this.sessionManager.setStatus('pairing');
         this.onQRCode?.(qr);
-        this.onStatusUpdate?.('| WhatsApp: type /whatsapp to connect');
+        this.onStatusUpdate?.('| WhatsApp: Disconnected');
     }
 
     private async handleConnectionOpen() {
@@ -340,31 +340,23 @@ export class WhatsAppService {
         }
 
         if (shouldTreatAsLoggedOut) {
-            if (isAuthRejected && !isBadMac && allowPairingOnAuthFailure) {
-                if (this.verboseMode) {
-                    console.error(`Session rejected [${statusCode}] - clearing auth state and starting pairing`);
-                }
-                await this.sessionManager.deleteAuthState();
-                this.cleanupSocket();
-                this.socket = undefined;
-                this.isReconnecting = false;
-                await this.start({ allowPairingOnAuthFailure: false });
-                return;
-            }
-
             if (this.verboseMode) {
-                console.error(`Session invalid or logged out [${statusCode}] - preserving auth state and requiring re-auth`);
+                console.error(`Session rejected [${statusCode}] - preserving auth state`);
             }
             if (isBadMac) {
                 if (this.verboseMode) {
                     console.error('[WhatsApp-Pi] Bad MAC error detected. Your session keys are corrupted.');
-                    console.error('[WhatsApp-Pi] Run /whatsapp-logout to clear auth state, then reconnect with /whatsapp-connect');
+                    console.error('[WhatsApp-Pi] Use Logoff (Delete Session) only if reconnect keeps failing.');
                 }
                 this.onStatusUpdate?.('| WhatsApp: Session Error (Bad MAC)');
+            } else if (isAuthRejected && allowPairingOnAuthFailure) {
+                this.onStatusUpdate?.('| WhatsApp: Session Preserved (Reconnect Failed)');
             }
-            this.sessionManager.setStatus('logged-out');
+            this.cleanupSocket();
+            this.isReconnecting = false;
+            await this.sessionManager.setStatus('disconnected');
             if (!isBadMac) {
-                this.onStatusUpdate?.('| WhatsApp: Logged out');
+                this.onStatusUpdate?.('| WhatsApp: Disconnected');
             }
             return;
         }

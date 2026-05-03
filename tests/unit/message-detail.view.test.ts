@@ -3,6 +3,7 @@ import { MessageDetailView } from '../../src/ui/message-detail.view.js';
 
 describe('MessageDetailView', () => {
     it('renders full message context and content', () => {
+        const ansiPattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
         const view = new MessageDetailView({
             title: 'Message • Ana',
             messageId: 'MSG1',
@@ -15,7 +16,7 @@ describe('MessageDetailView', () => {
             onReply: vi.fn()
         });
 
-        const output = view.render(80).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+        const output = view.render(80).join('\n').replace(ansiPattern, '');
 
         expect(output).toContain('╭');
         expect(output).toContain('╰');

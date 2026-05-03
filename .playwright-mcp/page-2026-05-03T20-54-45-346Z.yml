@@ -1,0 +1,254 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - link "Log In" [ref=e8] [cursor=pointer]:
+      - /url: https://www.roblox.com/login
+    - generic [ref=e9]:
+      - generic [ref=e15]:
+        - heading "Sign up and start having fun!" [level=3] [ref=e16]
+        - generic [ref=e19]:
+          - generic [ref=e21]:
+            - generic [ref=e22]: Birthday
+            - generic [ref=e23]:
+              - combobox [ref=e25]:
+                - option "Month" [disabled] [selected]
+                - option "January"
+                - option "February"
+                - option "March"
+                - option "April"
+                - option "May"
+                - option "June"
+                - option "July"
+                - option "August"
+                - option "September"
+                - option "October"
+                - option "November"
+                - option "December"
+              - combobox [ref=e27]:
+                - option "Day" [disabled] [selected]
+                - option "01"
+                - option "02"
+                - option "03"
+                - option "04"
+                - option "05"
+                - option "06"
+                - option "07"
+                - option "08"
+                - option "09"
+                - option "10"
+                - option "11"
+                - option "12"
+                - option "13"
+                - option "14"
+                - option "15"
+                - option "16"
+                - option "17"
+                - option "18"
+                - option "19"
+                - option "20"
+                - option "21"
+                - option "22"
+                - option "23"
+                - option "24"
+                - option "25"
+                - option "26"
+                - option "27"
+                - option "28"
+                - option "29"
+                - option "30"
+                - option "31"
+              - combobox [ref=e29]:
+                - option "Year" [disabled] [selected]
+                - option "2021"
+                - option "2020"
+                - option "2019"
+                - option "2018"
+                - option "2017"
+                - option "2016"
+                - option "2015"
+                - option "2014"
+                - option "2013"
+                - option "2012"
+                - option "2011"
+                - option "2010"
+                - option "2009"
+                - option "2008"
+                - option "2007"
+                - option "2006"
+                - option "2005"
+                - option "2004"
+                - option "2003"
+                - option "2002"
+                - option "2001"
+                - option "2000"
+                - option "1999"
+                - option "1998"
+                - option "1997"
+                - option "1996"
+                - option "1995"
+                - option "1994"
+                - option "1993"
+                - option "1992"
+                - option "1991"
+                - option "1990"
+                - option "1989"
+                - option "1988"
+                - option "1987"
+                - option "1986"
+                - option "1985"
+                - option "1984"
+                - option "1983"
+                - option "1982"
+                - option "1981"
+                - option "1980"
+                - option "1979"
+                - option "1978"
+                - option "1977"
+                - option "1976"
+                - option "1975"
+                - option "1974"
+                - option "1973"
+                - option "1972"
+                - option "1971"
+                - option "1970"
+                - option "1969"
+                - option "1968"
+                - option "1967"
+                - option "1966"
+                - option "1965"
+                - option "1964"
+                - option "1963"
+                - option "1962"
+                - option "1961"
+                - option "1960"
+                - option "1959"
+                - option "1958"
+                - option "1957"
+                - option "1956"
+                - option "1955"
+                - option "1954"
+                - option "1953"
+                - option "1952"
+                - option "1951"
+                - option "1950"
+                - option "1949"
+                - option "1948"
+                - option "1947"
+                - option "1946"
+                - option "1945"
+                - option "1944"
+                - option "1943"
+                - option "1942"
+                - option "1941"
+                - option "1940"
+                - option "1939"
+                - option "1938"
+                - option "1937"
+                - option "1936"
+                - option "1935"
+                - option "1934"
+                - option "1933"
+                - option "1932"
+                - option "1931"
+                - option "1930"
+                - option "1929"
+                - option "1928"
+                - option "1927"
+            - paragraph [ref=e31]
+          - generic [ref=e32]:
+            - generic [ref=e33]: Username
+            - textbox "Don't use your real name" [ref=e34]
+            - paragraph [ref=e35]
+          - generic [ref=e36]:
+            - generic [ref=e37]: Password
+            - textbox "At least 8 characters" [ref=e39]
+            - paragraph [ref=e40]
+          - generic [ref=e41]:
+            - generic [ref=e42]: Gender (optional)
+            - generic [ref=e44]:
+              - button "Female" [ref=e45] [cursor=pointer]
+              - button "Male" [ref=e47] [cursor=pointer]
+          - generic [ref=e50]:
+            - text: By clicking Sign Up, you are agreeing to our
+            - link "Terms of Use" [ref=e51] [cursor=pointer]:
+              - /url: https://www.roblox.com/info/terms
+            - text: (including arbitration) and acknowledge our
+            - link "Privacy Policy" [ref=e52] [cursor=pointer]:
+              - /url: https://www.roblox.com/info/privacy
+            - text: . If you are under 18, you agree that your parent/guardian permits you to create this account and agrees to our Terms of Use.
+          - button "Sign Up" [disabled]
+      - generic [ref=e54]:
+        - heading "Roblox on your device" [level=3] [ref=e55]
+        - list [ref=e56]:
+          - listitem [ref=e57]:
+            - link "Roblox on App Store" [ref=e58] [cursor=pointer]:
+              - /url: https://itunes.apple.com/us/app/roblox-mobile/id431946152
+              - img "Roblox on App Store" [ref=e59]
+          - listitem [ref=e60]:
+            - link "Get it on Google Play" [ref=e61] [cursor=pointer]:
+              - /url: https://play.google.com/store/apps/details?id=com.roblox.client&hl=en&utm_source=global_co&utm_medium=prtnr&utm_content=Mar2515&utm_campaign=PartBadge&pcampaignid=MKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1
+              - img "Get it on Google Play" [ref=e62]
+          - listitem [ref=e63]:
+            - link "Roblox on PlayStation" [ref=e64] [cursor=pointer]:
+              - /url: https://www.playstation.com/en-us/games/roblox/
+              - img "Roblox on PlayStation" [ref=e65]
+          - listitem [ref=e66]:
+            - link "Roblox on Xbox Store" [ref=e67] [cursor=pointer]:
+              - /url: https://www.xbox.com/en-us/games/store/roblox/bq1tn1t79v9k
+              - img "Roblox on Xbox Store" [ref=e68]
+          - listitem [ref=e69]:
+            - link "Roblox on Meta Quest" [ref=e70] [cursor=pointer]:
+              - /url: https://www.meta.com/experiences/5804350719675181/
+              - img "Roblox on Meta Quest" [ref=e71]
+          - listitem [ref=e72]:
+            - link "Roblox on Microsoft Store" [ref=e73] [cursor=pointer]:
+              - /url: https://apps.microsoft.com/detail/9pmf91n3lz3m?referrer=appbadge&mode=direct
+              - img "Roblox on Microsoft Store" [ref=e74]
+          - listitem [ref=e75]:
+            - link "Roblox on Amazon Store" [ref=e76] [cursor=pointer]:
+              - /url: https://www.amazon.com/Roblox-Corporation/dp/B00NUF4YOA
+              - img "Roblox on Amazon Store" [ref=e77]
+          - listitem [ref=e78]:
+            - link "Roblox on Galaxy Store" [ref=e79] [cursor=pointer]:
+              - /url: https://galaxystore.samsung.com/detail/com.roblox.client.samsunggalaxy
+              - img "Roblox on Galaxy Store" [ref=e80]
+  - contentinfo [ref=e82]:
+    - generic [ref=e83]:
+      - list [ref=e84]:
+        - listitem [ref=e85]:
+          - link "About Us" [ref=e86] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/about-us?locale=en_us
+        - listitem [ref=e87]:
+          - link "Jobs" [ref=e88] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/jobs?locale=en_us
+        - listitem [ref=e89]:
+          - link "Blog" [ref=e90] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/blog?locale=en_us
+        - listitem [ref=e91]:
+          - link "Parents" [ref=e92] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/parents?locale=en_us
+        - listitem [ref=e93]:
+          - link "Buy Gift Cards" [ref=e94] [cursor=pointer]:
+            - /url: https://www.roblox.com/giftcards?locale=en_us
+        - listitem [ref=e95]:
+          - link "Help" [ref=e96] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/help?locale=en_us
+        - listitem [ref=e97]:
+          - link "Terms" [ref=e98] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/terms?locale=en_us
+        - listitem [ref=e99]:
+          - link "Accessibility" [ref=e100] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/accessibility?locale=en_us
+        - listitem [ref=e101]:
+          - link "Privacy" [ref=e102] [cursor=pointer]:
+            - /url: https://www.roblox.com/info/privacy?locale=en_us
+        - listitem [ref=e103]:
+          - link "Your Privacy Choices" [ref=e104] [cursor=pointer]:
+            - /url: https://www.roblox.com/my/account#!/privacy?locale=en_us
+        - listitem [ref=e105]:
+          - link "Sitemap" [ref=e106] [cursor=pointer]:
+            - /url: https://www.roblox.com/sitemap?locale=en_us
+        - listitem
+      - generic [ref=e107]:
+        - progressbar [ref=e109]:
+          - img [ref=e110]
+        - paragraph [ref=e114]: ©2026 Roblox Corporation. Roblox, the Roblox logo and Powering Imagination are among our registered and unregistered trademarks in the U.S. and other countries.

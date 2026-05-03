@@ -16,8 +16,12 @@
                 "-e",
                 "${workspaceFolder}\\whatsapp-pi.ts"
             ],
-            "console": "integratedTerminal",
-            "outputCapture": "std"
+            "console": "externalTerminal",
+            "outputCapture": "std",
+            "env": {
+                "LANG": "pt_BR.UTF-8",
+                "LC_ALL": "pt_BR.UTF-8"
+            }
         },
         {
             "type": "node",
@@ -32,8 +36,12 @@
                 "${workspaceFolder}\\whatsapp-pi.ts",
                 "-c"
             ],
-            "console": "integratedTerminal",
-            "outputCapture": "std"
+            "console": "externalTerminal",
+            "outputCapture": "std",
+            "env": {
+                "LANG": "pt_BR.UTF-8",
+                "LC_ALL": "pt_BR.UTF-8"
+            }
         },
         {
             "type": "node",
@@ -48,8 +56,12 @@
                 "${workspaceFolder}\\whatsapp-pi.ts",
                 "--verbose"
             ],
-            "console": "integratedTerminal",
-            "outputCapture": "std"
+            "console": "externalTerminal",
+            "outputCapture": "std",
+            "env": {
+                "LANG": "pt_BR.UTF-8",
+                "LC_ALL": "pt_BR.UTF-8"
+            }
         },
         {
             "type": "node",
@@ -65,8 +77,12 @@
                 "--whatsapp-pi-online",
                 "-c"
             ],
-            "console": "integratedTerminal",
-            "outputCapture": "std"
+            "console": "externalTerminal",
+            "outputCapture": "std",
+            "env": {
+                "LANG": "pt_BR.UTF-8",
+                "LC_ALL": "pt_BR.UTF-8"
+            }
         }
     ]
 }

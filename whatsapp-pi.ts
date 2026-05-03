@@ -60,7 +60,7 @@ export default function (pi: ExtensionAPI) {
     };
 
     // Initial status setup
-    pi.on("session_start", async (event, ctx) => {
+    pi.on("session_start", async (_event, ctx) => {
         _ctx = ctx;
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
@@ -100,12 +100,13 @@ export default function (pi: ExtensionAPI) {
         const savedStateEntry = [...ctx.sessionManager.getEntries()]
             .reverse()
             .find(entry => entry.type === "custom" && entry.customType === "whatsapp-state");
-        const isWhatsappPiOn = event.reason === "startup" && pi.getFlag("whatsapp-pi-online") === true;
+        const isWhatsappPiOn = pi.getFlag("whatsapp-pi-online") === true;
+        const registered = await sessionManager.isRegistered();
 
         if (savedStateEntry) {
             const data = (savedStateEntry as { data?: any }).data;
             if (data.status) {
-                const restoredStatus = data.status === 'connected' && !isWhatsappPiOn
+                const restoredStatus = data.status === 'connected' && !(isWhatsappPiOn && registered)
                     ? 'disconnected'
                     : data.status;
                 await sessionManager.setStatus(restoredStatus);
@@ -119,9 +120,6 @@ export default function (pi: ExtensionAPI) {
             }
         }
 
-        // Check whatsapp flag — only auto-connect on initial startup, not reloads/new sessions
-        const registered = await sessionManager.isRegistered();
-
         if (isWhatsappPiOn && registered) {
             ctx.ui.setStatus('whatsapp', '| WhatsApp: Auto-connecting...');
 
@@ -133,7 +131,7 @@ export default function (pi: ExtensionAPI) {
                 attempts++;
                 try {
                     await whatsappService.start({ allowPairingOnAuthFailure: false });
-                } catch (error) {
+                } catch {
                     if (attempts < maxAttempts) {
                         ctx.ui.notify(`WhatsApp: Connection attempt ${attempts} failed. Retrying...`, 'warning');
                         setTimeout(tryConnect, 3000);
@@ -145,6 +143,8 @@ export default function (pi: ExtensionAPI) {
             };
 
             await tryConnect();
+        } else if (isWhatsappPiOn) {
+            ctx.ui.notify('WhatsApp: Auto-connect requested, but no saved WhatsApp credentials were found. Use Connect WhatsApp once to scan the QR code.', 'warning');
         } else {
             ctx.ui.notify('WhatsApp: Use Connect / Reconnect WhatsApp. QR code will appear only if pairing is needed.', 'info');
         }
@@ -157,7 +157,7 @@ export default function (pi: ExtensionAPI) {
             if (code !== 0 && code !== 99) { // 99 is a common exit code for -v in some versions
                 throw new Error(`pdftotext returned code ${code}`);
             }
-        } catch (e) {
+        } catch {
             ctx.ui.notify('WhatsApp: pdftotext not found. PDF document support will be limited to storage only.', 'warning');
             logger.warn('[WhatsApp-Pi] Warning: pdftotext not found in system PATH.');
         }
@@ -333,7 +333,7 @@ export default function (pi: ExtensionAPI) {
                     } else {
                         ctx.ui.notify(`Failed to send WhatsApp reply`, 'error');
                     }
-                } catch (error) {
+                } catch {
                     ctx.ui.notify(`Failed to send WhatsApp reply`, 'error');
                 }
             }

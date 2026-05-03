@@ -1,13 +1,20 @@
 import { SessionManager } from '../../src/services/session.manager.js';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { rm, access } from 'fs/promises';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('SessionManager', () => {
     let sessionManager: SessionManager;
+    let dataDir: string;
 
-    beforeEach(() => {
-        sessionManager = new SessionManager();
+    beforeEach(async () => {
+        dataDir = await mkdtemp(join(tmpdir(), 'whatsapp-pi-session-'));
+        sessionManager = new SessionManager(dataDir);
+    });
+
+    afterEach(async () => {
+        await rm(dataDir, { recursive: true, force: true });
     });
 
     it('should initialize with logged-out status', () => {
@@ -36,9 +43,39 @@ describe('SessionManager', () => {
         expect(exists).toBe(true);
     });
 
-    it('should remember auth state once available', async () => {
+    it('should remember auth state once credentials exist on disk', async () => {
+        await mkdir(sessionManager.getAuthStateDir(), { recursive: true });
+        await writeFile(join(sessionManager.getAuthStateDir(), 'creds.json'), '{}');
         await sessionManager.markAuthStateAvailable();
         expect(await sessionManager.isRegistered()).toBe(true);
+    });
+
+    it('should not trust stale config when credentials are missing from disk', async () => {
+        await sessionManager.markAuthStateAvailable();
+
+        expect(await sessionManager.isRegistered()).toBe(false);
+    });
+
+    it('should recover and rewrite a config file with trailing data', async () => {
+        const configPath = join(dataDir, 'config.json');
+        await writeFile(configPath, [
+            '{',
+            '  "allowList": [{ "number": "+1234567890", "name": "Ana" }],',
+            '  "blockList": [],',
+            '  "ignoredNumbers": [],',
+            '  "status": "connected",',
+            '  "hasAuthState": false,',
+            '  "openaiKey": "",',
+            '  "visionModel": "gpt-4o"',
+            '} trailing-data'
+        ].join('\n'));
+
+        await sessionManager.ensureInitialized();
+
+        expect(sessionManager.getAllowList()).toEqual([{ number: '+1234567890', name: 'Ana' }]);
+        expect(sessionManager.getStatus()).toBe('disconnected');
+        const rewrittenConfig = await readFile(configPath, 'utf-8');
+        expect(() => JSON.parse(rewrittenConfig)).not.toThrow();
     });
 
     it('should handle block list and mutual exclusivity', async () => {

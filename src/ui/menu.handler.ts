@@ -63,13 +63,14 @@ export class MenuHandler {
                 await this.whatsappService.stop();
                 ctx.ui.notify('WhatsApp Agent Disconnected', 'warning');
                 break;
-            case 'Logoff (Delete Session)':
+            case 'Logoff (Delete Session)': {
                 const confirmLogoff = await ctx.ui.confirm('Logoff', 'Delete all credentials?');
                 if (confirmLogoff) {
                     await this.whatsappService.logout();
                     ctx.ui.notify('Logged off and credentials deleted', 'info');
                 }
                 break;
+            }
             case 'Allowed Numbers':
                 await this.manageAllowList(ctx);
                 break;

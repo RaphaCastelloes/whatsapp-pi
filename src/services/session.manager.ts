@@ -1,6 +1,6 @@
 import { useMultiFileAuthState } from '@whiskeysockets/baileys';
 import { join } from 'path';
-import { readFile, writeFile, mkdir, rm, readdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, rm, rename } from 'fs/promises';
 import { homedir } from 'os';
 import { SessionStatus } from '../models/whatsapp.types.js';
 
@@ -11,9 +11,9 @@ export interface Contact {
 
 export class SessionManager {
     // Data is stored in the user's home directory to persist across updates
-    private readonly baseDir = join(homedir(), '.pi', 'whatsapp-pi');
-    private readonly authStateDir = join(this.baseDir, 'auth');
-    private readonly configPath = join(this.baseDir, 'config.json');
+    private readonly baseDir: string;
+    private readonly authStateDir: string;
+    private readonly configPath: string;
 
     private status: SessionStatus = 'logged-out';
     private allowList: Contact[] = [];
@@ -22,6 +22,12 @@ export class SessionManager {
     private hasAuthState = false;
     private openaiKey: string = '';
     private visionModel: string = 'gpt-4o';
+
+    constructor(baseDir = join(homedir(), '.pi', 'whatsapp-pi')) {
+        this.baseDir = baseDir;
+        this.authStateDir = join(this.baseDir, 'auth');
+        this.configPath = join(this.baseDir, 'config.json');
+    }
 
     private async ensureStorageDirectories() {
         await mkdir(this.baseDir, { recursive: true });
@@ -33,13 +39,15 @@ export class SessionManager {
             await this.ensureStorageDirectories();
             await this.loadConfig();
             await this.syncAuthStateFromDisk();
-        } catch (error) {}
+        } catch {
+            // Initialization is best-effort; callers can continue with defaults.
+        }
     }
 
     private async loadConfig() {
         try {
             const data = await readFile(this.configPath, 'utf-8');
-            const config = JSON.parse(data);
+            const { config, recovered } = this.parseConfig(data);
             
             const cleanContact = (item: any): Contact | null => {
                 if (typeof item === 'string') return { number: item };
@@ -63,12 +71,70 @@ export class SessionManager {
             this.hasAuthState = Boolean(config.hasAuthState);
             this.openaiKey = config.openaiKey || '';
             this.visionModel = config.visionModel || 'gpt-4o';
-        } catch (error) {
+
+            if (recovered) {
+                await this.saveConfig();
+            }
+        } catch {
             // File not found is fine
         }
     }
 
+    private parseConfig(data: string): { config: any; recovered: boolean } {
+        try {
+            return { config: JSON.parse(data), recovered: false };
+        } catch (error) {
+            const objectEnd = this.findFirstJsonObjectEnd(data);
+            if (objectEnd < 0) {
+                throw error;
+            }
+
+            return {
+                config: JSON.parse(data.slice(0, objectEnd + 1)),
+                recovered: true
+            };
+        }
+    }
+
+    private findFirstJsonObjectEnd(data: string): number {
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+
+        for (let i = 0; i < data.length; i++) {
+            const char = data[i];
+
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (char === '\\') {
+                    escaped = true;
+                } else if (char === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (char === '"') {
+                inString = true;
+                continue;
+            }
+
+            if (char === '{') {
+                depth++;
+            } else if (char === '}') {
+                depth--;
+                if (depth === 0) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public async saveConfig() {
+        const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
         try {
             const config = {
                 allowList: this.allowList,
@@ -79,8 +145,11 @@ export class SessionManager {
                 openaiKey: this.openaiKey,
                 visionModel: this.visionModel
             };
-            await writeFile(this.configPath, JSON.stringify(config, null, 2));
+            await mkdir(this.baseDir, { recursive: true });
+            await writeFile(tempPath, JSON.stringify(config, null, 2));
+            await rename(tempPath, this.configPath);
         } catch (error) {
+            await rm(tempPath, { force: true }).catch(() => {});
             console.error('Failed to save config:', error);
         }
     }
@@ -206,15 +275,8 @@ export class SessionManager {
     }
 
     public async isRegistered(): Promise<boolean> {
-        try {
-            const credsPah = join(this.authStateDir, 'creds.json');
-            await readFile(credsPah);
-            this.hasAuthState = true;
-            return true;
-        } catch {
-            await this.syncAuthStateFromDisk();
-            return this.hasAuthState;
-        }
+        await this.syncAuthStateFromDisk();
+        return this.hasAuthState;
     }
 
     async markAuthStateAvailable() {
@@ -230,16 +292,24 @@ export class SessionManager {
     }
 
     private async syncAuthStateFromDisk() {
+        const nextHasAuthState = await this.hasCredentialsFile();
+        const nextStatus = nextHasAuthState || this.status !== 'connected'
+            ? this.status
+            : 'disconnected';
+
+        if (nextHasAuthState !== this.hasAuthState || nextStatus !== this.status) {
+            this.hasAuthState = nextHasAuthState;
+            this.status = nextStatus;
+            await this.saveConfig();
+        }
+    }
+
+    private async hasCredentialsFile(): Promise<boolean> {
         try {
-            const entries = await readdir(this.authStateDir);
-            if (entries.length > 0) {
-                if (!this.hasAuthState) {
-                    this.hasAuthState = true;
-                    await this.saveConfig();
-                }
-            }
+            await readFile(join(this.authStateDir, 'creds.json'));
+            return true;
         } catch {
-            // Ignore missing directory / empty auth state
+            return false;
         }
     }
 

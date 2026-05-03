@@ -102,7 +102,7 @@ export class IncomingMediaService {
     }
 
     private async saveDocument(fileName: string, buffer: Buffer): Promise<string> {
-        const sanitized = fileName.replace(/[^a-z0-9\._-]/gi, '_');
+        const sanitized = fileName.replace(/[^a-z0-9._-]/gi, '_');
         const savedFileName = `${Date.now()}_${sanitized}`;
         const documentDir = join(process.cwd(), '.pi-data', 'whatsapp', 'documents');
         const absolutePath = join(documentDir, savedFileName);

@@ -68,14 +68,12 @@ describe('WhatsAppService auth failure handling', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
-    it('clears rejected saved auth and restarts pairing on manual connect', async () => {
+    it('preserves rejected saved auth on manual connect failure', async () => {
         const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
         const sessionManager = createSessionManager();
         const service = new WhatsAppService(sessionManager as any);
         const statusCallback = vi.fn();
-        const qrCallback = vi.fn();
         service.setStatusCallback(statusCallback);
-        service.setQRCodeCallback(qrCallback);
 
         await service.start();
         await baileysMocks.sockets[0].handlers.get('connection.update')!({
@@ -88,14 +86,11 @@ describe('WhatsAppService auth failure handling', () => {
             }
         });
 
-        expect(sessionManager.deleteAuthState).toHaveBeenCalledOnce();
-        expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(2);
-
-        await baileysMocks.sockets[1].handlers.get('connection.update')!({ qr: 'QR123' });
-
-        expect(sessionManager.setStatus).toHaveBeenCalledWith('pairing');
-        expect(qrCallback).toHaveBeenCalledWith('QR123');
-        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: type /whatsapp to connect');
+        expect(sessionManager.deleteAuthState).not.toHaveBeenCalled();
+        expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(1);
+        expect(sessionManager.setStatus).toHaveBeenCalledWith('disconnected');
+        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Session Preserved (Reconnect Failed)');
+        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Disconnected');
 
         await service.stop();
     });
@@ -120,8 +115,8 @@ describe('WhatsAppService auth failure handling', () => {
 
         expect(sessionManager.deleteAuthState).not.toHaveBeenCalled();
         expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(1);
-        expect(sessionManager.setStatus).toHaveBeenCalledWith('logged-out');
-        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Logged out');
+        expect(sessionManager.setStatus).toHaveBeenCalledWith('disconnected');
+        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Disconnected');
 
         await service.stop();
     });
