@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Análise da feature Send Message — whatsapp-pi</title>
+  <style>
+    :root { color-scheme: light; }
+    body { font-family: Arial, Helvetica, sans-serif; line-height: 1.5; margin: 0; padding: 32px; background: #f7f7f8; color: #1f2937; }
+    .card { max-width: 980px; margin: 0 auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 28px 30px; box-shadow: 0 6px 24px rgba(0,0,0,.05); }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { margin-top: 0; font-size: 2rem; }
+    h2 { margin-top: 28px; font-size: 1.25rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    h3 { margin-top: 20px; font-size: 1rem; }
+    p, li { font-size: 0.98rem; }
+    code, pre { font-family: Consolas, Monaco, monospace; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 10px; overflow: auto; }
+    .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: .82rem; margin-right: 6px; }
+    .ok { color: #166534; }
+    .warn { color: #92400e; }
+    .bad { color: #991b1b; }
+    ul { padding-left: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .box { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; }
+    @media (max-width: 760px) { body { padding: 14px; } .card { padding: 20px; } .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Análise da feature <code>send message</code></h1>
+    <p>
+      Projeto: <strong>whatsapp-pi</strong> · foco: fluxo de envio de mensagens, do UI/Tool até Baileys.
+    </p>
+
+    <h2>Escopo analisado</h2>
+    <ul>
+      <li><code>src/services/message.sender.ts</code></li>
+      <li><code>src/services/whatsapp.service.ts</code></li>
+      <li><code>src/ui/menu.handler.ts</code></li>
+      <li><code>src/ui/message-reply.view.ts</code></li>
+      <li><code>whatsapp-pi.ts</code> (tool <code>send_wa_message</code> e reply automático)</li>
+      <li>testes: <code>tests/unit/message.sender.test.ts</code>, <code>tests/unit/message-reply.view.test.ts</code>, <code>tests/unit/menu.handler.test.ts</code>, <code>tests/unit/send-wa-message.tool.test.ts</code></li>
+    </ul>
+
+    <h2>Como fluxo funciona</h2>
+    <div class="grid">
+      <div class="box">
+        <h3>1) Tool LLM: <code>send_wa_message</code></h3>
+        <p>Registrada em <code>whatsapp-pi.ts</code>. Ela valida status conectado, loga payload, chama <code>whatsappService.sendMessage()</code> e grava no recents quando sucesso.</p>
+      </div>
+      <div class="box">
+        <h3>2) UI menu e reply</h3>
+        <p><code>menu.handler.ts</code> e <code>message-reply.view.ts</code> usam <code>sendMenuMessage()</code>, com presença <em>composing/paused</em> e persistência em <code>RecentsService</code>.</p>
+      </div>
+    </div>
+
+    <h3>3) Camada de transporte</h3>
+    <p>
+      <code>WhatsAppService</code> decide entre dois caminhos:
+    </p>
+    <ul>
+      <li><code>sendMessage()</code> → delega para <code>MessageSender</code>, com retry e espera por conexão.</li>
+      <li><code>sendMenuMessage()</code> → envia direto no socket, sem retry/backoff.</li>
+    </ul>
+
+    <h2>Pontos fortes</h2>
+    <ul>
+      <li><span class="ok">Boa separação de responsabilidade</span>: UI, serviço e transporte estão bem divididos.</li>
+      <li><span class="ok">Consistência visual</span>: presença de digitação antes/depois do envio.</li>
+      <li><span class="ok">Persistência de histórico</span>: mensagem enviada vai para <code>RecentsService</code>.</li>
+      <li><span class="ok">Cobertura de teste boa</span>: há testes para sucesso, falha, desconexão e roteamento de UI/tool.</li>
+    </ul>
+
+    <h2>Problemas / riscos</h2>
+    <ul>
+      <li><span class="warn">Duplicação de lógica</span>: <code>sendMessage()</code> e <code>sendMenuMessage()</code> repetem presença + envio + tratamento de erro.</li>
+      <li><span class="warn">Marca <code>π</code> espalhada</span>: <code>MessageSender</code> adiciona sufixo, o menu às vezes adiciona e às vezes não. Regra fica implícita.</li>
+      <li><span class="warn">Retry inconsistente</span>: só caminho do <code>MessageSender</code> tem retry/backoff. UI usa envio direto.</li>
+      <li><span class="warn">Wait por conexão em polling</span>: <code>waitIfOffline()</code> fica checando a cada 1s. Funciona, mas é bruto.</li>
+      <li><span class="warn">Falhas silenciosas</span>: <code>sendPresence()</code> e <code>markRead()</code> engolem erro fora do verbose.</li>
+    </ul>
+
+    <h2>Leitura técnica</h2>
+    <p>
+      Hoje feature está <strong>funcional e coerente</strong>, mas com dívida de manutenção em torno de <strong>duas políticas de envio</strong>:
+      envio com retry/branded suffix e envio simples para UI. Isso pode gerar comportamento diferente para mesma ação de usuário dependendo do ponto de entrada.
+    </p>
+
+    <pre><code>Entrada UI / Tool
+  → WhatsAppService
+    → MessageSender OU sendMenuMessage
+      → socket.sendMessage
+        → recents.recordMessage</code></pre>
+
+    <h2>Recomendações</h2>
+    <ul>
+      <li><span class="bad">Centralizar pipeline</span>: criar helper único para montar presença, retry, envio e pós-processamento.</li>
+      <li><span class="bad">Tornar regra do π explícita</span>: nomear a política em constante/função. Ex.: <code>appendBrandSuffix()</code>.</li>
+      <li><span class="bad">Unificar error model</span>: normalizar erro de timeout/socket/conexão para UI mostrar mensagem padrão.</li>
+      <li><span class="bad">Cobrir UI com retry mínimo</span>: ao menos falhas transitórias no menu/reply deveriam ser reattemptadas.</li>
+      <li><span class="bad">Trocar polling por evento</span>: se serviço expuser sinal de conexão, remove wait ativo.</li>
+    </ul>
+
+    <h2>Conclusão</h2>
+    <p>
+      Base boa. Código entrega feature sem bagunça estrutural. Maior problema é <strong>duplicação de fluxo de envio</strong> e <strong>política implícita</strong> de branding/retry.
+      Se unificar isso, feature fica mais previsível e fácil de evoluir.
+    </p>
+  </main>
+</body>
+</html>

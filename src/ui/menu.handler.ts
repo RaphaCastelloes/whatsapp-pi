@@ -325,8 +325,7 @@ export class MenuHandler {
         await this.sendPromptedMenuMessage(ctx, {
             displayName: this.getConversationDisplayName(conversation),
             senderNumber: conversation.senderNumber,
-            senderName: conversation.senderName,
-            appendPiSuffix: false
+            senderName: conversation.senderName
         });
     }
 
@@ -334,8 +333,7 @@ export class MenuHandler {
         await this.sendPromptedMenuMessage(ctx, {
             displayName: this.formatAllowedContactOption(contact),
             senderNumber: contact.number,
-            senderName: contact.name,
-            appendPiSuffix: true
+            senderName: contact.name
         });
     }
 
@@ -345,10 +343,9 @@ export class MenuHandler {
             displayName: string;
             senderNumber: string;
             senderName?: string;
-            appendPiSuffix: boolean;
         }
     ) {
-        const { displayName, senderNumber, senderName, appendPiSuffix } = options;
+        const { displayName, senderNumber, senderName } = options;
         for (let attempt = 0; attempt < 2; attempt++) {
             const inputText = (await ctx.ui.input(`Send a message to ${displayName}:`))?.trim() || '';
 
@@ -357,14 +354,13 @@ export class MenuHandler {
                 continue;
             }
 
-            const messageText = appendPiSuffix ? `${inputText} π` : inputText;
-            const result = await this.whatsappService.sendMenuMessage(this.toJid(senderNumber), messageText);
+            const result = await this.whatsappService.sendMenuMessage(this.toJid(senderNumber), inputText);
             if (result.success) {
                 await this.recentsService.recordMessage({
                     messageId: result.messageId ?? `${Date.now()}`,
                     senderNumber,
                     senderName,
-                    text: messageText,
+                    text: inputText,
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });

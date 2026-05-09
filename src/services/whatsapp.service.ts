@@ -497,13 +497,14 @@ export class WhatsAppService {
         return this.socket;
     }
 
-    async sendMessage(jid: string, text: string) {
+    async sendMessage(jid: string, text: string, origin: 'agent' | 'menu' = 'agent') {
         // Ensure we show the typing indicator before sending
         await this.sendPresence(jid, 'composing');
 
         const result = await this.messageSender.send({
             recipientJid: jid,
-            text: text
+            text,
+            origin
         });
 
         // After sending, we can stop the typing indicator
@@ -518,35 +519,7 @@ export class WhatsAppService {
 
     async sendMenuMessage(jid: string, text: string) {
         const normalizedJid = this.normalizeRecipientJid(jid);
-        const socket = this.getActiveSocket();
-
-        if (!socket) {
-            return {
-                success: false,
-                error: 'WhatsApp is not connected',
-                attempts: 0
-            };
-        }
-
-        try {
-            await this.sendPresence(normalizedJid, 'composing');
-            const response = await socket.sendMessage(normalizedJid, { text });
-            await this.sendPresence(normalizedJid, 'paused');
-
-            return {
-                success: true,
-                messageId: response?.key?.id,
-                attempts: 1
-            };
-        } catch (error: unknown) {
-            await this.sendPresence(normalizedJid, 'paused');
-            console.error(`Failed to send menu message to ${normalizedJid}:`, error);
-            return {
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                attempts: 1
-            };
-        }
+        return this.sendMessage(normalizedJid, text, 'menu');
     }
 
     async sendPresence(jid: string, presence: 'composing' | 'recording' | 'paused') {

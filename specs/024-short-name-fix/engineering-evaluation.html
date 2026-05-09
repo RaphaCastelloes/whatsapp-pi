@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plano de Desenvolvimento — Menu Message Send Reliability</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; padding: 32px; font-family: Arial, Helvetica, sans-serif; background: #f6f7fb; color: #111827; line-height: 1.5; }
+    .page { max-width: 1100px; margin: 0 auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 28px 30px; box-shadow: 0 8px 26px rgba(0,0,0,.06); }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { margin: 0 0 8px; font-size: 2rem; }
+    h2 { margin-top: 28px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; font-size: 1.25rem; }
+    h3 { margin-top: 18px; font-size: 1.02rem; }
+    p, li, td, th { font-size: .96rem; }
+    .muted { color: #6b7280; }
+    .tag { display: inline-block; padding: 3px 8px; margin-right: 6px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: .82rem; }
+    .ok { color: #166534; }
+    .warn { color: #92400e; }
+    .bad { color: #991b1b; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #e5e7eb; padding: 10px 12px; vertical-align: top; }
+    th { background: #f9fafb; text-align: left; }
+    code, pre { font-family: Consolas, Monaco, monospace; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 10px; overflow: auto; }
+    ul { padding-left: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .box { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; }
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li { margin: 6px 0; }
+    .checklist li::before { content: "☐ "; color: #6b7280; }
+    .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: .9rem; }
+    @media (max-width: 820px) { body { padding: 14px; } .page { padding: 20px; } .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Plano de Desenvolvimento — Menu Message Send Reliability</h1>
+    <p class="muted">Feature branch: <code>024-short-name-fix</code> · Objetivo: estabilizar envio de mensagens pelo menu e diferenciar respostas originadas pelo Agent das disparadas pelo menu.</p>
+
+    <h2>1. Resumo executivo</h2>
+    <p>
+      Problema central: envio via menu usa caminho frágil, diferente do restante da aplicação. A solução proposta unifica
+      o pipeline de envio, centraliza regras de formatação por origem e mantém histórico de mensagens enviadas.
+    </p>
+
+    <div class="grid">
+      <div class="box">
+        <h3>Valor para o usuário</h3>
+        <ul>
+          <li>Envio pelo menu fica confiável.</li>
+          <li>Feedback de sucesso/erro fica claro.</li>
+          <li>Agent e menu ficam distinguíveis pelo marcador π.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>Decisão de arquitetura</h3>
+        <ul>
+          <li>Um único caminho compartilhado de envio.</li>
+          <li>Regras de retry e erro centralizadas.</li>
+          <li>Política de formatação aplicada em um só lugar.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>2. Documentos-base</h2>
+    <ul>
+      <li><code>specs/024-short-name-fix/spec.md</code></li>
+      <li><code>specs/024-short-name-fix/plan.md</code></li>
+      <li><code>specs/024-short-name-fix/research.md</code></li>
+      <li><code>specs/024-short-name-fix/data-model.md</code></li>
+      <li><code>specs/024-short-name-fix/quickstart.md</code></li>
+      <li><code>specs/024-short-name-fix/tasks.md</code></li>
+    </ul>
+
+    <h2>3. Contexto técnico</h2>
+    <table>
+      <tr><th>Item</th><th>Conteúdo</th></tr>
+      <tr><td>Language/Version</td><td>TypeScript 5.x / Node.js 20+</td></tr>
+      <tr><td>Primary Dependencies</td><td><code>@whiskeysockets/baileys</code>, <code>pi-agent-sdk</code>, <code>pino</code>, <code>qrcode-terminal</code></td></tr>
+      <tr><td>Storage</td><td>State local em arquivos: <code>.pi-data/</code> e <code>~/.pi/whatsapp-pi/</code></td></tr>
+      <tr><td>Testing</td><td>Vitest</td></tr>
+      <tr><td>Target Platform</td><td>Runtime de extensão Pi em Node.js</td></tr>
+      <tr><td>Project Type</td><td>Pi extension</td></tr>
+      <tr><td>Constraints</td><td>Manter comportamento consistente; evitar duplicação; preservar histórico</td></tr>
+    </table>
+
+    <h2>4. Constituição / gates</h2>
+    <ul class="checklist">
+      <li><span class="ok">OOP</span>: usar classes e serviços existentes</li>
+      <li><span class="ok">Clean Code</span>: nomes claros e funções pequenas</li>
+      <li><span class="ok">SOLID</span>: UI separada da regra de envio</li>
+      <li><span class="ok">TypeScript</span>: tipagem estrita</li>
+      <li><span class="ok">Simplicity</span>: reutilizar pipeline atual, sem nova rota paralela</li>
+    </ul>
+
+    <h2>5. Pesquisa e decisões</h2>
+    <table>
+      <tr><th>Decisão</th><th>Racional</th><th>Alternativas rejeitadas</th></tr>
+      <tr>
+        <td>Usar um caminho compartilhado de envio</td>
+        <td>Evita drift de comportamento e centraliza retry/erro</td>
+        <td>Manter envio direto no menu; retry separado só para menu</td>
+      </tr>
+      <tr>
+        <td>Preservar contrato atual de resultado</td>
+        <td>Reduz impacto em UI, tools e testes</td>
+        <td>Criar formato novo de retorno</td>
+      </tr>
+      <tr>
+        <td>Centralizar regra de formatação por origem</td>
+        <td>Remove inconsistência e preserva distinção Agent/menu</td>
+        <td>Manter formatação por fluxo sem regra clara</td>
+      </tr>
+      <tr>
+        <td>Manter histórico de enviados</td>
+        <td>Valor já esperado pelo usuário</td>
+        <td>Adiar atualização de recents</td>
+      </tr>
+    </table>
+
+    <h2>6. Modelo de dados</h2>
+    <div class="grid">
+      <div class="box">
+        <h3>OutgoingMessage</h3>
+        <p><strong>Campos:</strong> recipient, text, timestamp, status, messageId, source, attempts.</p>
+        <p><strong>Regras:</strong> texto não pode ser vazio; sucesso deve gerar histórico.</p>
+      </div>
+      <div class="box">
+        <h3>SendRule</h3>
+        <p><strong>Campos:</strong> formatação, retry, erro, presença.</p>
+        <p><strong>Regras:</strong> mesmo conjunto para todos os entry points.</p>
+      </div>
+      <div class="box">
+        <h3>ConversationHistoryEntry</h3>
+        <p><strong>Campos:</strong> messageId, senderNumber, text, direction, timestamp.</p>
+        <p><strong>Relação:</strong> criado somente após envio bem-sucedido.</p>
+      </div>
+    </div>
+
+    <h2>7. Estratégia de entrega</h2>
+    <p><strong>MVP:</strong> corrigir o menu primeiro (US1).</p>
+    <p><strong>Sequência:</strong> Foundation → menu confiável → consistência entre entry points → validação clara → polish.</p>
+
+    <h2>8. Tarefas de desenvolvimento</h2>
+    <table>
+      <tr><th>Fase</th><th>ID</th><th>Story</th><th>Descrição</th></tr>
+      <tr><td>Setup</td><td>T001</td><td>—</td><td>Atualizar contrato compartilhado em <code>src/models/whatsapp.types.ts</code></td></tr>
+      <tr><td>Setup</td><td>T002</td><td>—</td><td>Alinhar <code>specs/024-short-name-fix/quickstart.md</code></td></tr>
+      <tr><td>Foundational</td><td>T003</td><td>—</td><td>Refatorar <code>src/services/message.sender.ts</code></td></tr>
+      <tr><td>Foundational</td><td>T004</td><td>—</td><td>Centralizar presença/retry/erro em <code>src/services/whatsapp.service.ts</code></td></tr>
+      <tr><td>US1</td><td>T005</td><td>US1</td><td>Roteamento de <code>sendMenuMessage()</code> para pipeline compartilhado</td></tr>
+      <tr><td>US1</td><td>T006</td><td>US1</td><td>Simplificar manejo do menu em <code>src/ui/menu.handler.ts</code></td></tr>
+      <tr><td>US1</td><td>T007</td><td>US1</td><td>Garantir persistência em <code>whatsapp-pi.ts</code></td></tr>
+      <tr><td>US2</td><td>T008</td><td>US2</td><td>Atualizar <code>src/ui/message-reply.view.ts</code> para não adicionar π</td></tr>
+      <tr><td>US2</td><td>T009</td><td>US2</td><td>Normalizar envio do menu em <code>src/ui/menu.handler.ts</code> para não adicionar π</td></tr>
+      <tr><td>US2</td><td>T010</td><td>US2</td><td>Centralizar política de π por origem no sender</td></tr>
+      <tr><td>US3</td><td>T011</td><td>US3</td><td>Validar mensagem vazia em <code>src/ui/message-reply.view.ts</code></td></tr>
+      <tr><td>US3</td><td>T012</td><td>US3</td><td>Validar mensagem vazia em <code>src/ui/menu.handler.ts</code></td></tr>
+      <tr><td>US3</td><td>T013</td><td>US3</td><td>Padronizar feedback de sucesso/erro</td></tr>
+      <tr><td>Polish</td><td>T014</td><td>—</td><td>Atualizar <code>quickstart.md</code></td></tr>
+      <tr><td>Polish</td><td>T015</td><td>—</td><td>Limpar branches/comentários redundantes</td></tr>
+    </table>
+
+    <h2>9. Dependências</h2>
+    <ul>
+      <li>Phase 1 → sem dependências.</li>
+      <li>Phase 2 → depende de Setup e bloqueia todas as stories.</li>
+      <li>US1 → depende da pipeline compartilhada.</li>
+      <li>US2 → depende da pipeline compartilhada; pode seguir US1.</li>
+      <li>US3 → depende da pipeline compartilhada e dos entry points consistentes.</li>
+    </ul>
+
+    <h2>10. Validação</h2>
+    <ul>
+      <li>Task checklist format: <span class="ok">ok</span></li>
+      <li>User stories independentes: <span class="ok">ok</span></li>
+      <li>MVP scope: <span class="ok">US1</span></li>
+      <li>Docs gerados: <span class="ok">ok</span></li>
+    </ul>
+
+    <h2>11. Quickstart de verificação</h2>
+    <ol>
+      <li>Rodar a suíte de testes.</li>
+      <li>Abrir menu do WhatsApp.</li>
+      <li>Enviar mensagem pelo menu.</li>
+      <li>Enviar mensagem via recents.</li>
+      <li>Responder via view de mensagem.</li>
+      <li>Confirmar que respostas do Agent incluem π.</li>
+      <li>Confirmar que mensagens disparadas pelo menu não incluem π.</li>
+      <li>Confirmar bloqueio de mensagem vazia.</li>
+      <li>Confirmar histórico de enviados.</li>
+    </ol>
+
+    <h2>12. Riscos principais</h2>
+    <ul>
+      <li><span class="warn">Duplicação de lógica</span>: se menu continuar com rota própria, a inconsistência volta.</li>
+      <li><span class="warn">Política de π por origem</span>: precisa ficar explícita para evitar surpresa e preservar distinção Agent/menu.</li>
+      <li><span class="warn">Retry inconsistente</span>: UI e tool precisam alinhar comportamento.</li>
+    </ul>
+
+    <h2>13. Conclusão</h2>
+    <p>
+      Este plano ataca a causa raiz: envio fraco no menu e regras espalhadas. A abordagem mais segura é unificar o fluxo,
+      manter contrato estável e aplicar validação/feedback consistentes, preservando a distinção de origem via π.
+    </p>
+
+    <div class="footer">Documento gerado a partir de <code>specs/024-short-name-fix/</code> para avaliação técnica dos Engenheiros.</div>
+  </main>
+</body>
+</html>

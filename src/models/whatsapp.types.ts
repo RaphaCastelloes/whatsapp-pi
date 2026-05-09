@@ -18,9 +18,12 @@ export interface IncomingMessage {
     timestamp: number;
 }
 
+export type MessageOrigin = 'agent' | 'menu';
+
 export interface MessageRequest {
     recipientJid: string;
     text: string;
+    origin?: MessageOrigin;
     options?: {
         maxRetries?: number;
         priority?: 'high' | 'normal';

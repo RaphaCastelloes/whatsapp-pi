@@ -23,3 +23,4 @@ Thumbs.db
 # Pi Extension Data
 .pi/extensions/whatsapp/auth/
 .pi-data/
+.playwright-mcp/

@@ -34,6 +34,21 @@ describe('WhatsAppService Filtering', () => {
         expect(whatsappService.getEffectiveStatus()).toBe('disconnected');
     });
 
+    it('should send menu messages without the pi suffix', async () => {
+        const send = vi.fn().mockResolvedValue({ success: true, messageId: 'MSG1', attempts: 1 });
+        (whatsappService as any).messageSender = { send };
+
+        await sessionManager.setStatus('connected');
+
+        await whatsappService.sendMenuMessage('5511999998888@s.whatsapp.net', 'Hello');
+
+        expect(send).toHaveBeenCalledWith({
+            recipientJid: '5511999998888@s.whatsapp.net',
+            text: 'Hello',
+            origin: 'menu'
+        });
+    });
+
     it('should only process messages if sender is in allow list', async () => {
         const callback = vi.fn();
         whatsappService.setMessageCallback(callback);

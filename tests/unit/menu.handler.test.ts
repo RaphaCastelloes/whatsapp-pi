@@ -163,7 +163,7 @@ describe('MenuHandler', () => {
         expect(ctx.ui.notify).toHaveBeenCalledWith('Added +5511999998888', 'info');
     });
 
-    it('sends a message to an allowed contact with the Pi suffix and records it', async () => {
+    it('sends a message to an allowed contact without the Pi suffix and records it', async () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowList.mockReturnValue([{ number: '+5511999998888', name: 'Ana' }]);
         const ctx = createContext({
@@ -177,13 +177,13 @@ describe('MenuHandler', () => {
         expect(ctx.ui.notify).toHaveBeenCalledWith('Please enter a message before sending.', 'error');
         expect(whatsappService.sendMenuMessage).toHaveBeenCalledWith(
             '5511999998888@s.whatsapp.net',
-            'Oi π'
+            'Oi'
         );
         expect(recentsService.recordMessage).toHaveBeenCalledWith({
             messageId: 'MSG123',
             senderNumber: '+5511999998888',
             senderName: 'Ana',
-            text: 'Oi π',
+            text: 'Oi',
             direction: 'outgoing',
             timestamp: 1234567890
         });

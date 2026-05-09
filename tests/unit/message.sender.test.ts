@@ -16,7 +16,7 @@ describe('MessageSender', () => {
         whatsappService.isVerbose.mockReturnValue(false);
     });
 
-    it('sends branded text through the active socket', async () => {
+    it('sends branded text through the active socket for agent origin', async () => {
         const sendMessage = vi.fn().mockResolvedValue({ key: { id: 'MSG123' } });
         whatsappService.getSocket.mockReturnValue({ sendMessage });
         const sender = new MessageSender(whatsappService as any);
@@ -32,6 +32,26 @@ describe('MessageSender', () => {
 
         expect(sendMessage).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', {
             text: 'hello π'
+        });
+    });
+
+    it('sends plain text through the active socket for menu origin', async () => {
+        const sendMessage = vi.fn().mockResolvedValue({ key: { id: 'MSG124' } });
+        whatsappService.getSocket.mockReturnValue({ sendMessage });
+        const sender = new MessageSender(whatsappService as any);
+
+        await expect(sender.send({
+            recipientJid: '5511999998888@s.whatsapp.net',
+            text: 'hello',
+            origin: 'menu'
+        })).resolves.toEqual({
+            success: true,
+            messageId: 'MSG124',
+            attempts: 1
+        });
+
+        expect(sendMessage).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', {
+            text: 'hello'
         });
     });
 
