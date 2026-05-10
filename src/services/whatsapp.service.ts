@@ -495,24 +495,23 @@ export class WhatsAppService {
             : this.normalizeContactNumber(remoteJid.split('@')[0]);
         void this.recordIncomingMessage(message, remoteJid, text);
 
-        // In group-only mode, skip allow/block checks — the binding is the authorization
-        if (!this.boundGroupJid) {
-            if (this.sessionManager.isBlocked(senderJid)) {
-                if (this.isVerbose()) {
-                    console.log(`Ignoring message from ${senderJid} (explicitly blocked)`);
-                }
+        const pushName = message.pushName || undefined;
+
+        if (this.boundGroupJid) {
+            if (!this.sessionManager.isAllowedGroup(this.boundGroupJid)) {
+                await this.sessionManager.trackIgnoredNumber(this.boundGroupJid, pushName);
                 return;
             }
 
-            if (!this.sessionManager.isAllowed(senderJid)) {
-                if (this.isVerbose()) {
-                    console.log(`Ignoring message from ${senderJid} (not in allow list)`);
-                }
-                const pushName = message.pushName || undefined;
-                await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
-                return;
+            this.lastRemoteJid = remoteJid;
+            this.onMessage?.(payload);
+            return;
+        }
+
+        if (!this.sessionManager.isConversationAllowed(senderJid)) {
+            if (this.isVerbose()) {
+                console.log(`Ignoring message from ${senderJid} (not in allow list)`);
             }
-            const pushName = message.pushName || undefined;
             await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
             return;
         }
