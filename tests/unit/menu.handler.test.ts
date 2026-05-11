@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MenuHandler } from '../../src/ui/menu.handler.js';
-import { resetI18n } from '../../src/i18n.js';
-import { showMessageDetailView } from '../../src/ui/message-detail.view.js';
-import { showMessageReplyView } from '../../src/ui/message-reply.view.js';
+import { MenuHandler } from '../../src/ui/menu.handler.ts';
+import { resetI18n } from '../../src/i18n.ts';
+import { showMessageDetailView } from '../../src/ui/message-detail.view.ts';
+import { showMessageReplyView } from '../../src/ui/message-reply.view.ts';
 
 vi.mock('qrcode-terminal', () => ({
     generate: vi.fn()
 }));
 
-vi.mock('../../src/ui/message-detail.view.js', () => ({
+vi.mock('../../src/ui/message-detail.view.ts', () => ({
     showMessageDetailView: vi.fn().mockResolvedValue(undefined)
 }));
 
-vi.mock('../../src/ui/message-reply.view.js', () => ({
+vi.mock('../../src/ui/message-reply.view.ts', () => ({
     showMessageReplyView: vi.fn().mockResolvedValue(undefined)
 }));
 

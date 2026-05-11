@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
-import { showMessageReplyView } from '../../src/ui/message-reply.view.js';
+import { resetI18n } from '../../src/i18n.ts';
+import { showMessageReplyView } from '../../src/ui/message-reply.view.ts';
 
 const createContext = (edits: Array<string | undefined>) => {
     const queue = [...edits];

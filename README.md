@@ -27,7 +27,7 @@ Pi is a powerful agentic AI coding assistant that operates in your terminal. Thi
 - **Media Support**: 
   - **Vision Analysis**: Automatically forwards WhatsApp images to Pi for analysis.
   - **Audio Transcription**: Transcribes voice notes when Whisper is installed.
-  - **Document Handling**: Downloads and stores documents (PDF, text) for agent access.
+  - **Document Handling**: Downloads and stores documents (PDF, text) for agent access; PDFs include a bounded text preview when readable.
 
 ## Prerequisites
 
@@ -36,10 +36,8 @@ To enable audio transcription features:
 python -m pip install -U openai-whisper
 ```
 
-To enable PDF reading capabilities (required for the agent to process documents):
-- **Linux**: `sudo apt-get install poppler-utils`
-- **macOS**: `brew install poppler`
-- **Windows**: Install `poppler` (e.g., via Scoop) and add to PATH.
+PDF documents are parsed locally and do not require extra system utilities.
+If a PDF cannot be parsed automatically, it is still saved and forwarded with a clear fallback notice.
 
 ## Quick Start
 
@@ -164,7 +162,7 @@ npm test
 - **Group-Only Mode**: Use `--whatsapp-group <jid>` to bind Pi to a single WhatsApp group. The group must also be present in Allowed Groups.
 - **Recents Store**: Recent conversations and message history are persisted in `~/.pi/whatsapp-pi/recents/recents.json`.
 - **Message Detail / Reply**: Open a message from history to inspect full content and reply with `R`.
-- **Media Support**: Images are forwarded for vision analysis, audio is transcribed with Whisper, and documents are saved under `./.pi-data/whatsapp/documents/`.
+- **Media Support**: Images are forwarded for vision analysis, audio is transcribed with Whisper, and PDFs are saved under `./.pi-data/whatsapp/documents/` with local text preview when available.
 - **Session Handling**: Saved state, allow list, and startup reconnects are restored automatically when available.
 - **Intelligent Message Filtering**: Messages ending with `π` are ignored to prevent bot loops.
 - **Storage Management**: Persistent data lives under `.pi-data/` plus the recents store in the user home directory.

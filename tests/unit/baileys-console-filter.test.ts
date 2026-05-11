@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     installBaileysConsoleFilter,
     shouldSuppressBaileysConsoleMessage
-} from '../../src/services/baileys-console-filter.js';
+} from '../../src/services/baileys-console-filter.ts';
 
 describe('baileys console filter', () => {
     let restoreFilter: (() => void) | undefined;

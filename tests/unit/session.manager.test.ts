@@ -1,4 +1,4 @@
-import { SessionManager } from '../../src/services/session.manager.js';
+import { SessionManager } from '../../src/services/session.manager.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';

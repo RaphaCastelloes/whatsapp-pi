@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WhatsAppPiLogger } from '../../src/services/whatsapp-pi.logger.js';
+import { WhatsAppPiLogger } from '../../src/services/whatsapp-pi.logger.ts';
 
 describe('WhatsAppPiLogger', () => {
     afterEach(() => {

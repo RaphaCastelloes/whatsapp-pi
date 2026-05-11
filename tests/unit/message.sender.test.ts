@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
-import { MessageSender } from '../../src/services/message.sender.js';
+import { resetI18n } from '../../src/i18n.ts';
+import { MessageSender } from '../../src/services/message.sender.ts';
 
 describe('MessageSender', () => {
     const whatsappService = {

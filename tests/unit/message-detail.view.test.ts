@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
-import { MessageDetailView } from '../../src/ui/message-detail.view.js';
+import { resetI18n } from '../../src/i18n.ts';
+import { MessageDetailView } from '../../src/ui/message-detail.view.ts';
 
 describe('MessageDetailView', () => {
     beforeEach(() => {

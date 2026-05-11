@@ -26,6 +26,8 @@ Auto-generated from all feature plans. Last updated: 2026-05-11
 - Local file-based recents store under `~/.pi/whatsapp-pi/recents/recents.json` (019-seria-possivel-fazer)
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `vitest`, `typescript`, Node built-ins (`fs`, `fs/promises`, `child_process`, `os`, `path`) (021-increase-unit-test)
 - Existing local media directory under `~/.pi/whatsapp-medias`; tests should mock file access and not depend on real files (021-increase-unit-test)
+- TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@llamaindex/liteparse`, `pino`, `qrcode-terminal`, `@mariozechner/pi-coding-agent` (027-pdf-document-parsing)
+- Local filesystem under `.pi-data/whatsapp/documents/` (027-pdf-document-parsing)
 
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `qrcode-terminal`, `pi-agent-sdk` (assumed name for Pi extension API) (001-whatsapp-tui-integration)
 
@@ -45,9 +47,9 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 027-pdf-document-parsing: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@llamaindex/liteparse`, `pino`, `qrcode-terminal`, `@mariozechner/pi-coding-agent`
 - 026-allowed-contacts: Added TypeScript 5.x / Node.js 20+ + existing WhatsApp TUI menu and i18n strings for terminology rename
 - 021-increase-unit-test: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `vitest`, `typescript`, Node built-ins (`fs`, `fs/promises`, `child_process`, `os`, `path`)
-- 019-seria-possivel-fazer: Added TypeScript 5.x on Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 
 
 <!-- MANUAL ADDITIONS START -->

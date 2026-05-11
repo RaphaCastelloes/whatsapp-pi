@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SessionManager } from '../../src/services/session.manager.js';
-import { WhatsAppService } from '../../src/services/whatsapp.service.js';
+import { SessionManager } from '../../src/services/session.manager.ts';
+import { WhatsAppService } from '../../src/services/whatsapp.service.ts';
 
 describe('WhatsAppService Filtering', () => {
     let whatsappService: WhatsAppService;

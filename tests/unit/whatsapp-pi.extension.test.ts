@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
+import { resetI18n } from '../../src/i18n.ts';
 
 const mocks = vi.hoisted(() => {
     const createSessionManager = () => ({
@@ -63,33 +63,33 @@ const mocks = vi.hoisted(() => {
     };
 });
 
-vi.mock('../../src/services/session.manager.js', () => ({
+vi.mock('../../src/services/session.manager.ts', () => ({
     SessionManager: Object.assign(vi.fn(() => mocks.sessionManager), {
         isGroupJid: (jid: string) => jid.endsWith('@g.us')
     })
 }));
 
-vi.mock('../../src/services/whatsapp.service.js', () => ({
+vi.mock('../../src/services/whatsapp.service.ts', () => ({
     WhatsAppService: vi.fn(() => mocks.whatsappService)
 }));
 
-vi.mock('../../src/services/recents.service.js', () => ({
+vi.mock('../../src/services/recents.service.ts', () => ({
     RecentsService: vi.fn(() => mocks.recentsService)
 }));
 
-vi.mock('../../src/services/audio.service.js', () => ({
+vi.mock('../../src/services/audio.service.ts', () => ({
     AudioService: vi.fn(() => ({}))
 }));
 
-vi.mock('../../src/ui/menu.handler.js', () => ({
+vi.mock('../../src/ui/menu.handler.ts', () => ({
     MenuHandler: vi.fn(() => mocks.menuHandler)
 }));
 
-vi.mock('../../src/services/incoming-message.resolver.js', () => ({
+vi.mock('../../src/services/incoming-message.resolver.ts', () => ({
     extractIncomingText: (...args: unknown[]) => mocks.extractIncomingText(...args)
 }));
 
-vi.mock('../../src/services/incoming-media.service.js', () => ({
+vi.mock('../../src/services/incoming-media.service.ts', () => ({
     IncomingMediaService: vi.fn(() => mocks.incomingMediaService)
 }));
 
@@ -203,6 +203,7 @@ describe('whatsapp-pi extension', () => {
         expect(mocks.sessionManager.setStatus).toHaveBeenCalledWith('disconnected');
         expect(mocks.sessionManager.addNumber).toHaveBeenCalledWith('+5511999998888', 'Ana');
         expect(mocks.whatsappService.setIncomingMessageRecorder).toHaveBeenCalledOnce();
+        expect(pi.exec).not.toHaveBeenCalled();
     });
 
     it('preserves saved connected status when auto-connect is enabled and credentials exist', async () => {

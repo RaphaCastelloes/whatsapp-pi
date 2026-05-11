@@ -47,7 +47,7 @@ describe('WhatsAppService console filtering', () => {
     });
 
     it('suppresses known Baileys decrypt noise after socket startup in quiet mode', async () => {
-        const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const service = new WhatsAppService(createSessionManager() as any);
 
@@ -64,7 +64,7 @@ describe('WhatsAppService console filtering', () => {
     });
 
     it('does not suppress Baileys decrypt noise in verbose mode', async () => {
-        const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const service = new WhatsAppService(createSessionManager() as any);
         service.setVerboseMode(true);

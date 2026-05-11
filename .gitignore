@@ -24,3 +24,4 @@ Thumbs.db
 .pi/extensions/whatsapp/auth/
 .pi-data/
 package-lock.json
+.playwright-mcp

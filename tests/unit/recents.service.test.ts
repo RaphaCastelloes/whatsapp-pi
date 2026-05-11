@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RecentsService } from '../../src/services/recents.service.js';
+import { RecentsService } from '../../src/services/recents.service.ts';
 
 const fsMocks = vi.hoisted(() => ({
     mkdir: vi.fn().mockResolvedValue(undefined),

@@ -1,6 +1,7 @@
 import { downloadContentFromMessage } from 'baileys';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { LiteParse } from '@llamaindex/liteparse';
 import { AudioService } from './audio.service.js';
 import type { IncomingResolution } from './incoming-message.resolver.js';
 import { WhatsAppPiLogger } from './whatsapp-pi.logger.js';
@@ -12,7 +13,11 @@ export interface ProcessedIncomingContent {
     imageMimeType?: string;
 }
 
+const PDF_PREVIEW_LIMIT = 1200;
+
 export class IncomingMediaService {
+    private readonly pdfParser = new LiteParse({ ocrEnabled: true });
+
     constructor(
         private readonly audioService: AudioService,
         private readonly logger = new WhatsAppPiLogger(false)
@@ -80,6 +85,15 @@ export class IncomingMediaService {
                 + t('incoming.media.documentSize', { size: this.formatFileSize(fileSize) }) + '\n'
                 + t('incoming.media.documentLocation', { relativePath });
 
+            if (this.isPdfDocument(fileName, mimeType)) {
+                const preview = await this.extractPdfPreview(buffer);
+                if (preview) {
+                    text += `\n\n${t('incoming.media.documentPdfPreviewHeading')}\n${preview}`;
+                } else {
+                    text += `\n\n${t('incoming.media.documentPdfFallbackNotice')}`;
+                }
+            }
+
             if (documentMessage.caption) {
                 text += `\n\n${t('incoming.media.documentDescription', { caption: documentMessage.caption })}`;
             }
@@ -89,6 +103,34 @@ export class IncomingMediaService {
             this.logger.error(t('incoming.media.documentDownloadFailed'), error);
             return { text: t('incoming.media.documentDownloadFailedText', { fileName }) };
         }
+    }
+
+    private async extractPdfPreview(buffer: Buffer): Promise<string | null> {
+        try {
+            const result = await this.pdfParser.parse(buffer);
+            return this.formatPdfPreview(result.text);
+        } catch (error) {
+            this.logger.warn('[WhatsApp-Pi] PDF parsing failed, falling back to storage-only behavior.', error);
+            return null;
+        }
+    }
+
+    private formatPdfPreview(text: string | undefined | null): string | null {
+        const normalized = (text || '').replace(/\r\n/g, '\n').trim();
+        if (!normalized) {
+            return null;
+        }
+
+        if (normalized.length <= PDF_PREVIEW_LIMIT) {
+            return normalized;
+        }
+
+        return `${normalized.slice(0, PDF_PREVIEW_LIMIT)}…`;
+    }
+
+    private isPdfDocument(fileName: string, mimeType: string): boolean {
+        const normalizedMimeType = mimeType.toLowerCase().split(';')[0].trim();
+        return normalizedMimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
     }
 
     private async downloadMessage(message: any, type: 'image' | 'document'): Promise<Buffer> {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
-import { extractIncomingText } from '../../src/services/incoming-message.resolver.js';
+import { resetI18n } from '../../src/i18n.ts';
+import { extractIncomingText } from '../../src/services/incoming-message.resolver.ts';
 
 describe('extractIncomingText', () => {
     beforeEach(() => {

@@ -32,6 +32,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@llamaindex/liteparse": "^1.5.3",
     "baileys": "^6.7.21",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { IncomingMediaService } from '../../src/services/incoming-media.service.js';
+import { IncomingMediaService } from '../../src/services/incoming-media.service.ts';
 
 const mocks = vi.hoisted(() => ({
     downloadContentFromMessage: vi.fn(),
     mkdir: vi.fn().mockResolvedValue(undefined),
-    writeFile: vi.fn().mockResolvedValue(undefined)
+    writeFile: vi.fn().mockResolvedValue(undefined),
+    pdfParse: vi.fn()
 }));
 
 vi.mock('baileys', () => ({
@@ -14,6 +15,12 @@ vi.mock('baileys', () => ({
 vi.mock('node:fs/promises', () => ({
     mkdir: mocks.mkdir,
     writeFile: mocks.writeFile
+}));
+
+vi.mock('@llamaindex/liteparse', () => ({
+    LiteParse: vi.fn(() => ({
+        parse: mocks.pdfParse
+    }))
 }));
 
 const streamFrom = async function* (chunks: Buffer[]) {
@@ -33,6 +40,7 @@ describe('IncomingMediaService', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         audioService.transcribe.mockResolvedValue('audio text');
         mocks.downloadContentFromMessage.mockResolvedValue(streamFrom([Buffer.from('media')]));
+        mocks.pdfParse.mockResolvedValue({ text: 'PDF body text' });
         vi.spyOn(Date, 'now').mockReturnValue(1234567890);
     });
 
@@ -89,14 +97,16 @@ describe('IncomingMediaService', () => {
         });
     });
 
-    it('saves documents with sanitized filenames and metadata text', async () => {
+    it('saves pdf documents and includes bounded extracted text preview', async () => {
         const service = new IncomingMediaService(audioService as any);
+        const longText = `First line\n${'A'.repeat(1800)}`;
+        mocks.pdfParse.mockResolvedValueOnce({ text: longText });
 
         const result = await service.process({
             kind: 'document',
             text: '[Document]',
             documentMessage: {
-                fileName: 'bad name?.pdf',
+                fileName: 'contract.pdf',
                 mimetype: 'application/pdf',
                 fileLength: 2 * 1024 * 1024,
                 caption: 'Read this'
@@ -104,7 +114,7 @@ describe('IncomingMediaService', () => {
         }, 'Ana');
 
         expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ fileName: 'bad name?.pdf' }),
+            expect.objectContaining({ fileName: 'contract.pdf' }),
             'document'
         );
         expect(mocks.mkdir).toHaveBeenCalledWith(
@@ -112,12 +122,55 @@ describe('IncomingMediaService', () => {
             { recursive: true }
         );
         expect(mocks.writeFile).toHaveBeenCalledWith(
-            expect.stringContaining('1234567890_bad_name_.pdf'),
+            expect.stringContaining('1234567890_contract.pdf'),
             Buffer.from('media')
         );
-        expect(result.text).toContain('[Document Received: bad name?.pdf]');
+        expect(mocks.pdfParse).toHaveBeenCalledWith(Buffer.from('media'));
+        expect(result.text).toContain('[Document Received: contract.pdf]');
         expect(result.text).toContain('MIME Type: application/pdf');
         expect(result.text).toContain('Size: 2.0 MB');
+        expect(result.text).toContain('PDF text preview:');
+        expect(result.text).toContain('First line');
         expect(result.text).toContain('Description: Read this');
+        expect(result.text).not.toContain('A'.repeat(1300));
+    });
+
+    it('falls back gracefully when pdf parsing fails', async () => {
+        const service = new IncomingMediaService(audioService as any);
+        mocks.pdfParse.mockRejectedValueOnce(new Error('bad pdf'));
+
+        const result = await service.process({
+            kind: 'document',
+            text: '[Document]',
+            documentMessage: {
+                fileName: 'scanned.pdf',
+                mimetype: 'application/pdf',
+                fileLength: 512000
+            }
+        }, 'Ana');
+
+        expect(result.text).toContain('[Document Received: scanned.pdf]');
+        expect(result.text).toContain('Location: ./.pi-data/whatsapp/documents/1234567890_scanned.pdf');
+        expect(result.text).toContain('PDF text was not extracted automatically. The file is saved at the path above.');
+        expect(result.text).not.toContain('PDF text preview:');
+    });
+
+    it('keeps non-pdf document behavior unchanged', async () => {
+        const service = new IncomingMediaService(audioService as any);
+
+        const result = await service.process({
+            kind: 'document',
+            text: '[Document]',
+            documentMessage: {
+                fileName: 'notes.txt',
+                mimetype: 'text/plain',
+                fileLength: 1024
+            }
+        }, 'Ana');
+
+        expect(mocks.pdfParse).not.toHaveBeenCalled();
+        expect(result.text).toContain('[Document Received: notes.txt]');
+        expect(result.text).not.toContain('PDF text preview:');
+        expect(result.text).not.toContain('PDF text was not extracted automatically.');
     });
 });

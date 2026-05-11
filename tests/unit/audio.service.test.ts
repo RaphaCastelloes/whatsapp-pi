@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
+import { resetI18n } from '../../src/i18n.ts';
 import { join } from 'node:path';
 
 const mocks = vi.hoisted(() => ({
@@ -34,7 +34,7 @@ vi.mock('node:os', () => ({
     homedir: mocks.homedir
 }));
 
-import { AudioService } from '../../src/services/audio.service.js';
+import { AudioService } from '../../src/services/audio.service.ts';
 
 const createStream = (...chunks: Buffer[]) => (async function* () {
     for (const chunk of chunks) {

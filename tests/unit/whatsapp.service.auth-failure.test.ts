@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetI18n } from '../../src/i18n.js';
+import { resetI18n } from '../../src/i18n.ts';
 
 const baileysMocks = vi.hoisted(() => {
     const sockets: any[] = [];
@@ -76,7 +76,7 @@ describe('WhatsAppService auth failure handling', () => {
     });
 
     it('preserves rejected saved auth on manual connect failure', async () => {
-        const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const sessionManager = createSessionManager();
         const service = new WhatsAppService(sessionManager as any);
         const statusCallback = vi.fn();
@@ -103,7 +103,7 @@ describe('WhatsAppService auth failure handling', () => {
     });
 
     it('does not clear auth or start pairing on auto-connect auth failure', async () => {
-        const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const sessionManager = createSessionManager();
         const service = new WhatsAppService(sessionManager as any);
         const statusCallback = vi.fn();
@@ -130,7 +130,7 @@ describe('WhatsAppService auth failure handling', () => {
 
     it('backs off reconnect attempts and preserves credentials before replacing socket', async () => {
         vi.useFakeTimers();
-        const { WhatsAppService } = await import('../../src/services/whatsapp.service.js');
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const authState = await createSessionManager().getAuthState();
         const sessionManager = {
             ...createSessionManager(),

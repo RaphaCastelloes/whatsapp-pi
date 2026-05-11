@@ -183,17 +183,6 @@ export default function (pi: ExtensionAPI) {
         }
 
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
-
-        // Verify pdftotext availability for document support
-        try {
-            const { code } = await pi.exec('pdftotext', ['-v']);
-            if (code !== 0 && code !== 99) { // 99 is a common exit code for -v in some versions
-                throw new Error(`pdftotext returned code ${code}`);
-            }
-        } catch {
-            ctx.ui.notify('WhatsApp: pdftotext not found. PDF document support will be limited to storage only.', 'warning');
-            logger.warn('[WhatsApp-Pi] Warning: pdftotext not found in system PATH.');
-        }
     });
 
     // Track whether send_wa_message tool already sent a reply this turn
