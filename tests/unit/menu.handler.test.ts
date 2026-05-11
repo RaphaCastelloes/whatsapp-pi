@@ -146,24 +146,24 @@ describe('MenuHandler', () => {
         expect(ctx.ui.notify).toHaveBeenCalledWith('Logged off and credentials deleted', 'info');
     });
 
-    it('sorts allowed numbers and adds a valid number', async () => {
+    it('sorts allowed contacts and adds a valid contact', async () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowList.mockReturnValue([
             { number: '+2', name: 'Zoey' },
             { number: '+1', name: 'Ana' }
         ]);
         const ctx = createContext({
-            selects: ['Allowed Numbers', 'Add Number', 'Back', 'Back'],
+            selects: ['Allowed Contacts', 'Add Contact', 'Back', 'Back'],
             inputs: ['+5511999998888']
         });
         const handler = new MenuHandler(whatsappService as any, sessionManager as any, recentsService as any);
 
         await handler.handleCommand(ctx as any);
 
-        expect(ctx.ui.select).toHaveBeenCalledWith('Allowed Numbers', [
+        expect(ctx.ui.select).toHaveBeenCalledWith('Allowed Contacts', [
             'Ana (+1)',
             'Zoey (+2)',
-            'Add Number',
+            'Add Contact',
             'Back'
         ]);
         expect(sessionManager.addNumber).toHaveBeenCalledWith('+5511999998888');
@@ -174,7 +174,7 @@ describe('MenuHandler', () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowList.mockReturnValue([{ number: '+5511999998888', name: 'Ana' }]);
         const ctx = createContext({
-            selects: ['Allowed Numbers', 'Ana (+5511999998888)', 'Send Message', 'Back', 'Back', 'Back'],
+            selects: ['Allowed Contacts', 'Ana (+5511999998888)', 'Send Message', 'Back', 'Back', 'Back'],
             inputs: ['', 'Oi']
         });
         const handler = new MenuHandler(whatsappService as any, sessionManager as any, recentsService as any);
@@ -196,7 +196,7 @@ describe('MenuHandler', () => {
         });
     });
 
-    it('prints allowed contact numbers to the console and TUI info output on separate lines', async () => {
+    it('prints allowed contacts to the console and TUI info output on separate lines', async () => {
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowList.mockReturnValue([
@@ -205,12 +205,12 @@ describe('MenuHandler', () => {
         ]);
         const ctx = createContext({
             selects: [
-                'Allowed Numbers',
+                'Allowed Contacts',
                 'Ana (+5511999998888)',
-                'Print Number',
+                'Print Contact',
                 'Back',
                 'Dani (+553291297719)',
-                'Print Number',
+                'Print Contact',
                 'Back',
                 'Back',
                 'Back'
@@ -220,18 +220,18 @@ describe('MenuHandler', () => {
 
         await handler.handleCommand(ctx as any);
 
-        expect(ctx.ui.select).toHaveBeenCalledWith('Allowed Number • Ana (+5511999998888)', [
+        expect(ctx.ui.select).toHaveBeenCalledWith('Allowed Contact • Ana (+5511999998888)', [
             'History',
             'Send Message',
-            'Print Number',
+            'Print Contact',
             'Remove Alias',
-            'Remove Number',
+            'Remove Contact',
             'Back'
         ]);
         expect(ctx.ui.notify).toHaveBeenCalledWith('+5511999998888', 'info');
         expect(ctx.ui.notify).toHaveBeenCalledWith('+5511999998888\n+553291297719', 'info');
-        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed numbers\n  • +5511999998888');
-        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed numbers\n  • +5511999998888\n  • +553291297719');
+        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed contacts\n  • +5511999998888');
+        expect(logSpy).toHaveBeenCalledWith('[WhatsApp-Pi] Allowed contacts\n  • +5511999998888\n  • +553291297719');
     });
 
     it('sorts allowed groups and adds a valid group JID', async () => {
@@ -415,7 +415,7 @@ describe('MenuHandler', () => {
 
         expect(ctx.ui.select).toHaveBeenCalledWith('Recents • Ana (+5511999998888)', [
             'History',
-            'Allow Number',
+            'Allow Contact',
             'Send Message',
             'Back'
         ]);

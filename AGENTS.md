@@ -1,6 +1,6 @@
 ﻿# whatsapp-pi Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-28
+Auto-generated from all feature plans. Last updated: 2026-05-11
 
 ## Active Technologies
 - [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION] (002-manual-whatsapp-connection)
@@ -45,9 +45,9 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 026-allowed-contacts: Added TypeScript 5.x / Node.js 20+ + existing WhatsApp TUI menu and i18n strings for terminology rename
 - 021-increase-unit-test: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `vitest`, `typescript`, Node built-ins (`fs`, `fs/promises`, `child_process`, `os`, `path`)
 - 019-seria-possivel-fazer: Added TypeScript 5.x on Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
-- 017-message-reply: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `pino`, `qrcode-terminal`
 
 
 <!-- MANUAL ADDITIONS START -->

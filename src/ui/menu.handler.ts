@@ -14,7 +14,7 @@ interface HistoryOptionEntry {
 }
 
 export class MenuHandler {
-    private readonly printedAllowedNumbers: string[] = [];
+    private readonly printedAllowedContacts: string[] = [];
     private readonly printedAllowedGroups: string[] = [];
 
     constructor(
@@ -28,7 +28,7 @@ export class MenuHandler {
         const registered = await this.sessionManager.isRegistered();
         const title = t('menu.whatsapp.title', { status });
         const recentsLabel = t('menu.root.recents');
-        const allowedNumbersLabel = t('menu.root.allowedNumbers');
+        const allowedContactsLabel = t('menu.root.allowedNumbers');
         const allowedGroupsLabel = t('menu.root.allowedGroups');
         const disconnectWhatsAppLabel = t('menu.root.disconnectWhatsApp');
         const connectWhatsAppLabel = t('menu.root.connectWhatsApp');
@@ -38,7 +38,7 @@ export class MenuHandler {
 
         if (status === 'connected') {
             options.push(recentsLabel);
-            options.push(allowedNumbersLabel);
+            options.push(allowedContactsLabel);
             options.push(allowedGroupsLabel);
             options.push(disconnectWhatsAppLabel);
         } else {
@@ -81,7 +81,7 @@ export class MenuHandler {
                 }
                 break;
             }
-            case allowedNumbersLabel:
+            case allowedContactsLabel:
                 await this.manageAllowList(ctx);
                 break;
             case allowedGroupsLabel:
@@ -149,19 +149,19 @@ export class MenuHandler {
         const choice = await ctx.ui.select(title, options);
 
         if (choice === sendMessageLabel) {
-            await this.sendMessageToAllowedNumber(ctx, contact);
+            await this.sendMessageToAllowedContact(ctx, contact);
             await this.manageAllowedContact(ctx, contact);
             return;
         }
 
         if (choice === historyLabel) {
-            await this.showConversationHistoryForNumber(ctx, contact.number, displayName);
+            await this.showConversationHistoryForContact(ctx, contact.number, displayName);
             await this.manageAllowedContact(ctx, contact);
             return;
         }
 
         if (choice === printNumberLabel) {
-            this.printAllowedNumber(ctx, contact.number);
+            this.printAllowedContact(ctx, contact.number);
             await this.manageAllowedContact(ctx, contact);
             return;
         }
@@ -202,16 +202,16 @@ export class MenuHandler {
         await this.manageAllowList(ctx);
     }
 
-    private printAllowedNumber(ctx: ExtensionCommandContext, number: string) {
-        this.printedAllowedNumbers.push(number);
-        const output = this.printedAllowedNumbers
+    private printAllowedContact(ctx: ExtensionCommandContext, contactNumber: string) {
+        this.printedAllowedContacts.push(contactNumber);
+        const output = this.printedAllowedContacts
             .map((entry) => `  • ${entry}`)
             .join('\n');
         console.log([
             t('menu.allowed.printAllowedNumbersTitle'),
             output
         ].join('\n'));
-        ctx.ui.notify(this.printedAllowedNumbers.join('\n'), 'info');
+        ctx.ui.notify(this.printedAllowedContacts.join('\n'), 'info');
     }
 
     private async manageAllowedGroups(ctx: ExtensionCommandContext) {
@@ -276,7 +276,7 @@ export class MenuHandler {
         }
 
         if (choice === historyLabel) {
-            await this.showConversationHistoryForNumber(ctx, group.number, displayName);
+            await this.showConversationHistoryForContact(ctx, group.number, displayName);
             await this.manageAllowedGroup(ctx, group);
             return;
         }
@@ -377,7 +377,7 @@ export class MenuHandler {
             : this.sessionManager.getAllowedContact(conversation.senderNumber);
         const title = t('menu.recents.contact.title', { displayName });
         const historyLabel = t('menu.recents.contact.history');
-        const allowConversationLabel = isGroup
+        const allowContactLabel = isGroup
             ? t('menu.recents.contact.allowGroup')
             : t('menu.recents.contact.allowNumber');
         const sendMessageLabel = t('menu.recents.contact.sendMessage');
@@ -386,7 +386,7 @@ export class MenuHandler {
         const options: string[] = [historyLabel];
 
         if (!allowedContact) {
-            options.push(allowConversationLabel);
+            options.push(allowContactLabel);
         }
 
         options.push(sendMessageLabel);
@@ -399,7 +399,7 @@ export class MenuHandler {
 
         const choice = await ctx.ui.select(title, options);
 
-        if (choice === allowConversationLabel) {
+        if (choice === allowContactLabel) {
             if (this.sessionManager.isConversationAllowed(conversation.senderNumber)) {
                 ctx.ui.notify(t('menu.recents.alreadyAllowed', { number: conversation.senderNumber }), 'info');
             } else if (isGroup) {
@@ -451,7 +451,7 @@ export class MenuHandler {
         });
     }
 
-    private async sendMessageToAllowedNumber(ctx: ExtensionCommandContext, contact: Contact) {
+    private async sendMessageToAllowedContact(ctx: ExtensionCommandContext, contact: Contact) {
         await this.sendPromptedMenuMessage(ctx, {
             displayName: this.formatAllowedContactOption(contact),
             senderNumber: contact.number,
@@ -507,7 +507,7 @@ export class MenuHandler {
     }
 
     private async showConversationHistory(ctx: ExtensionCommandContext, conversation: RecentConversationSummary) {
-        await this.showConversationHistoryForNumber(
+        await this.showConversationHistoryForContact(
             ctx,
             conversation.senderNumber,
             this.getConversationDisplayName(conversation),
@@ -515,7 +515,7 @@ export class MenuHandler {
         );
     }
 
-    private async showConversationHistoryForNumber(
+    private async showConversationHistoryForContact(
         ctx: ExtensionCommandContext,
         senderNumber: string,
         displayName: string,
