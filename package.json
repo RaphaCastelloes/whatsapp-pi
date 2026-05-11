@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-pi",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "type": "module",
   "description": "WhatsApp integration extension for Pi",
   "main": "whatsapp-pi.ts",
@@ -54,6 +54,6 @@
     "extensions": [
       "./whatsapp-pi.ts"
     ],
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/WhatsApp.svg/512px-WhatsApp.svg.png"
+    "image": "https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg"
   }
 }
