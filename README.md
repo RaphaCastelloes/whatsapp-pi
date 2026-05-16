@@ -169,3 +169,4 @@ npm test
 - **Session Handling**: Saved state, allow list, and startup reconnects are restored automatically when available.
 - **Intelligent Message Filtering**: Messages ending with `π` are ignored to prevent bot loops.
 - **Storage Management**: Persistent data lives under `.pi-data/` plus the recents store in the user home directory.
+- **Improved Test Coverage (v1.0.56)**: Added unit tests for the `message_end` auto-reply handler, covering the happy path, disconnected guard, role guard, send failure, thrown exceptions, and the `send_wa_message` dedup flag. Fixed a Windows path separator bug in the recents service test suite.
