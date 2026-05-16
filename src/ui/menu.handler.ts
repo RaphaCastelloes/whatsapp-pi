@@ -291,12 +291,11 @@ export class MenuHandler {
         const historyLabel = t('menu.allowedGroups.group.history');
         const sendMessageLabel = t('menu.allowedGroups.group.sendMessage');
         const printGroupLabel = t('menu.allowedGroups.group.printGroup');
-        const reactionModeLabel = t('menu.allowedGroups.group.reactionMode');
         const removeAliasLabel = t('menu.allowedGroups.group.removeAlias');
         const addAliasLabel = t('menu.allowedGroups.group.addAlias');
         const removeGroupLabel = t('menu.allowedGroups.group.removeGroup');
         const backLabel = t('menu.allowedGroups.group.back');
-        const options = [historyLabel, sendMessageLabel, printGroupLabel, reactionModeLabel];
+        const options = [historyLabel, sendMessageLabel, printGroupLabel];
         if (group.name) {
             options.push(removeAliasLabel);
         } else {
@@ -320,12 +319,6 @@ export class MenuHandler {
 
         if (choice === printGroupLabel) {
             this.printAllowedGroup(ctx, group.number);
-            await this.manageAllowedGroup(ctx, group);
-            return;
-        }
-
-        if (choice === reactionModeLabel) {
-            await this.manageAllowedGroupReactionMode(ctx, group);
             await this.manageAllowedGroup(ctx, group);
             return;
         }
@@ -512,30 +505,6 @@ export class MenuHandler {
             senderName: group.name,
             appendPiSuffix: true
         });
-    }
-
-    private async manageAllowedGroupReactionMode(ctx: ExtensionCommandContext, group: Contact) {
-        const displayName = this.formatAllowedGroupOption(group);
-        const title = t('menu.allowedGroups.group.reactionMode.title', { displayName });
-        const activeLabel = t('menu.allowedGroups.group.reactionMode.active');
-        const passiveLabel = t('menu.allowedGroups.group.reactionMode.passive');
-        const backLabel = t('menu.allowedGroups.group.back');
-        const currentMode = this.sessionManager.getAllowedGroupReactionMode(group.number);
-        const options = [activeLabel, passiveLabel, backLabel];
-
-        const choice = await ctx.ui.select(title, options);
-
-        if (choice === backLabel || !choice) {
-            return;
-        }
-
-        if (choice === activeLabel || choice === passiveLabel) {
-            const nextMode = choice === activeLabel ? 'active' : 'passive';
-            if (currentMode !== nextMode) {
-                await this.sessionManager.setAllowedGroupReactionMode(group.number, nextMode);
-            }
-            ctx.ui.notify(t('menu.allowedGroups.group.reactionMode.updated', { displayName, mode: choice }), 'info');
-        }
     }
 
     private async sendPromptedMenuMessage(

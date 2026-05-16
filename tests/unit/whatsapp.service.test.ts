@@ -222,12 +222,11 @@ describe('WhatsAppService Filtering', () => {
             expect(callback).toHaveBeenCalledTimes(1);
         });
 
-        it('should ignore untagged passive group messages and respond to @ mentions', async () => {
+        it('should process allowed group messages without passive gating', async () => {
             const callback = vi.fn();
             whatsappService.setMessageCallback(callback);
             await sessionManager.setStatus('connected');
             await sessionManager.addAllowedGroup('120363012345@g.us');
-            await sessionManager.setAllowedGroupReactionMode('120363012345@g.us', 'passive');
             (whatsappService as any).socket = {
                 user: { lid: 'bot@lid' },
                 groupMetadata: vi.fn().mockResolvedValue({ id: '120363012345@g.us', subject: 'Team', participants: [] })
@@ -240,16 +239,53 @@ describe('WhatsAppService Filtering', () => {
                     pushName: 'Ana'
                 }]
             });
-            expect(callback).not.toHaveBeenCalled();
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should process image captions in allowed groups', async () => {
+            const callback = vi.fn();
+            whatsappService.setMessageCallback(callback);
+            await sessionManager.setStatus('connected');
+            await sessionManager.addAllowedGroup('120363012345@g.us');
+            (whatsappService as any).socket = {
+                user: { id: 'bot:0@s.whatsapp.net' },
+                groupMetadata: vi.fn().mockResolvedValue({ id: '120363012345@g.us', subject: 'Team', participants: [] })
+            };
+
+            await whatsappService.handleIncomingMessages({
+                messages: [{
+                    key: { remoteJid: '120363012345@g.us', participant: '5511999998888@s.whatsapp.net' },
+                    message: {
+                        imageMessage: {
+                            contextInfo: {
+                                mentionedJid: ['bot@s.whatsapp.net']
+                            }
+                        }
+                    } as any,
+                    pushName: 'Ana'
+                }]
+            });
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should allow group messages even when no agent candidates exist', async () => {
+            const callback = vi.fn();
+            whatsappService.setMessageCallback(callback);
+            await sessionManager.setStatus('connected');
+            await sessionManager.addAllowedGroup('120363012345@g.us');
+            (whatsappService as any).socket = {
+                user: undefined,
+                groupMetadata: vi.fn().mockResolvedValue({ id: '120363012345@g.us', subject: 'Team', participants: [] })
+            };
 
             await whatsappService.handleIncomingMessages({
                 messages: [{
                     key: { remoteJid: '120363012345@g.us', participant: '5511999998888@s.whatsapp.net' },
                     message: {
                         extendedTextMessage: {
-                            text: '@bot hello',
+                            text: 'hello',
                             contextInfo: {
-                                mentionedJid: ['bot@s.whatsapp.net']
+                                mentionedJid: []
                             }
                         }
                     },

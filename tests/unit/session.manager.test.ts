@@ -84,7 +84,7 @@ describe('SessionManager', () => {
         await sessionManager.ensureInitialized();
 
         expect(sessionManager.getAllowList()).toEqual([{ number: '+1234567890', name: 'Ana' }]);
-        expect(sessionManager.getAllowedGroups()).toEqual([{ number: '120363012345@g.us', name: 'Team', reactionMode: 'active' }]);
+        expect(sessionManager.getAllowedGroups()).toEqual([{ number: '120363012345@g.us', name: 'Team' }]);
         expect(sessionManager.getStatus()).toBe('disconnected');
         const rewrittenConfig = await readFile(configPath, 'utf-8');
         expect(() => JSON.parse(rewrittenConfig)).not.toThrow();
@@ -98,7 +98,7 @@ describe('SessionManager', () => {
         expect(sessionManager.isConversationAllowed(groupJid)).toBe(true);
         expect(sessionManager.isAllowed(groupJid)).toBe(false);
         expect(sessionManager.getAllowList()).toEqual([]);
-        expect(sessionManager.getAllowedGroups()).toEqual([{ number: groupJid, name: 'Team', reactionMode: 'active' }]);
+        expect(sessionManager.getAllowedGroups()).toEqual([{ number: groupJid, name: 'Team' }]);
 
         await sessionManager.removeAllowedGroup(groupJid);
         expect(sessionManager.isAllowedGroup(groupJid)).toBe(false);
@@ -146,14 +146,20 @@ describe('SessionManager', () => {
         expect(allowedGroups[0].name).toBeUndefined();
     });
 
-    it('should default allowed group reaction mode to active and allow updates', async () => {
-        const groupJid = '120363012345@g.us';
+    it('should ignore legacy passive reaction mode when loading groups', async () => {
+        const configPath = join(dataDir, 'config.json');
+        await writeFile(configPath, JSON.stringify({
+            allowList: [],
+            allowedGroups: [{ number: '120363012345@g.us', name: 'Team', reactionMode: 'passive' }],
+            ignoredNumbers: [],
+            status: 'connected',
+            hasAuthState: false,
+            openaiKey: '',
+            visionModel: 'gpt-4o'
+        }, null, 2));
 
-        await sessionManager.addAllowedGroup(groupJid);
-        expect(sessionManager.getAllowedGroupReactionMode(groupJid)).toBe('active');
+        await sessionManager.ensureInitialized();
 
-        await sessionManager.setAllowedGroupReactionMode(groupJid, 'passive');
-        expect(sessionManager.getAllowedGroupReactionMode(groupJid)).toBe('passive');
-        expect(sessionManager.getAllowedGroups()).toEqual([{ number: groupJid, reactionMode: 'passive' }]);
+        expect(sessionManager.getAllowedGroups()).toEqual([{ number: '120363012345@g.us', name: 'Team' }]);
     });
 });

@@ -260,19 +260,16 @@ describe('MenuHandler', () => {
         expect(ctx.ui.notify).toHaveBeenCalledWith('Added 120363999@g.us to the allowed groups list', 'info');
     });
 
-    it('changes allowed group reaction mode from the group menu', async () => {
+    it('shows allowed group menu without reaction mode options', async () => {
         const { whatsappService, sessionManager, recentsService } = createServices();
         sessionManager.getAllowedGroups.mockReturnValue([
             { number: '120363222@g.us', name: 'Zeta' },
             { number: '120363111@g.us', name: 'Alpha' }
         ]);
-        sessionManager.getAllowedGroupReactionMode.mockReturnValue('active');
         const ctx = createContext({
             selects: [
                 'Allowed Groups',
                 'Alpha (120363111@g.us)',
-                'Reaction Mode',
-                'Passive',
                 'Back',
                 'Back',
                 'Back'
@@ -286,13 +283,11 @@ describe('MenuHandler', () => {
             'History',
             'Send Message',
             'Print Group JID',
-            'Reaction Mode',
             'Remove Alias',
             'Remove Group',
             'Back'
         ]);
-        expect(sessionManager.setAllowedGroupReactionMode).toHaveBeenCalledWith('120363111@g.us', 'passive');
-        expect(ctx.ui.notify).toHaveBeenCalledWith('Reaction mode set to Passive for Alpha (120363111@g.us)', 'info');
+        expect(sessionManager.setAllowedGroupReactionMode).not.toHaveBeenCalled();
     });
 
 

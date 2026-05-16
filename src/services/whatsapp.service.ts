@@ -46,12 +46,23 @@ interface IncomingMessageContextInfo {
     mentionedJid?: string[];
 }
 
+interface IncomingMessageWithContext {
+    contextInfo?: IncomingMessageContextInfo;
+}
+
 interface IncomingMessageContent {
     conversation?: string;
     extendedTextMessage?: {
         text?: string;
         contextInfo?: IncomingMessageContextInfo;
     };
+    imageMessage?: IncomingMessageWithContext;
+    videoMessage?: IncomingMessageWithContext;
+    documentMessage?: IncomingMessageWithContext;
+    audioMessage?: IncomingMessageWithContext;
+    stickerMessage?: IncomingMessageWithContext;
+    buttonsMessage?: IncomingMessageWithContext;
+    templateMessage?: IncomingMessageWithContext;
 }
 
 interface IncomingMessageLike {
@@ -202,24 +213,6 @@ export class WhatsAppService {
         }
 
         return [...candidates];
-    }
-
-    private messageHasDirectMention(message: IncomingMessageLike): boolean {
-        const mentionedJids = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-        if (mentionedJids.length === 0) {
-            return false;
-        }
-
-        const agentCandidates = this.getAgentJidCandidates();
-        if (agentCandidates.length === 0) {
-            return false;
-        }
-
-        return mentionedJids.some(jid => {
-            const normalizedMention = this.normalizeJidForComparison(jid);
-            const mentionIdentity = this.normalizeJidIdentity(jid);
-            return agentCandidates.includes(normalizedMention) || agentCandidates.includes(mentionIdentity);
-        });
     }
 
     private getDisconnectStatusCode(error: unknown): number | undefined {
@@ -589,18 +582,10 @@ export class WhatsAppService {
         void this.recordIncomingMessage(message, remoteJid, text);
 
         const pushName = message.pushName || undefined;
-        const groupAllowed = isGroup && this.sessionManager.isAllowedGroup(remoteJid);
-        const passiveGroupBlocked = groupAllowed
-            && this.sessionManager.getAllowedGroupReactionMode(remoteJid) === 'passive'
-            && !this.messageHasDirectMention(message);
 
         if (this.boundGroupJid) {
             if (!this.sessionManager.isAllowedGroup(this.boundGroupJid)) {
                 await this.sessionManager.trackIgnoredNumber(this.boundGroupJid, pushName);
-                return;
-            }
-
-            if (this.sessionManager.getAllowedGroupReactionMode(this.boundGroupJid) === 'passive' && !this.messageHasDirectMention(message)) {
                 return;
             }
 
@@ -614,10 +599,6 @@ export class WhatsAppService {
                 console.log(`Ignoring message from ${senderJid} (not in allow list)`);
             }
             await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
-            return;
-        }
-
-        if (passiveGroupBlocked) {
             return;
         }
 

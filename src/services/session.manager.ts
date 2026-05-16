@@ -2,14 +2,13 @@ import { useMultiFileAuthState } from 'baileys';
 import { join } from 'path';
 import { readFile, writeFile, mkdir, rm, rename } from 'fs/promises';
 import { homedir } from 'os';
-import { SessionStatus, type ReactionMode } from '../models/whatsapp.types.js';
+import { SessionStatus } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
 
 export interface Contact {
     number: string;
     name?: string;
     sendNumber?: string;
-    reactionMode?: ReactionMode;
 }
 
 export class SessionManager {
@@ -75,11 +74,8 @@ export class SessionManager {
                         num = num.number;
                     }
                     if (typeof num === 'string') {
-                        const reactionMode = item.reactionMode === 'active' || item.reactionMode === 'passive'
-                            ? item.reactionMode
-                            : undefined;
                         const sendNumber = typeof item.sendNumber === 'string' ? item.sendNumber : undefined;
-                        return { number: num, name: item.name, sendNumber, reactionMode };
+                        return { number: num, name: item.name, sendNumber };
                     }
                 }
                 return null;
@@ -88,8 +84,6 @@ export class SessionManager {
             const loadedAllowList = (config.allowList || []).map(cleanContact).filter(Boolean) as Contact[];
             const loadedAllowedGroups = (config.allowedGroups || []).map(cleanContact).filter(Boolean) as Contact[];
             const migratedGroups = loadedAllowList.filter(c => SessionManager.isGroupJid(c.number));
-            const needsReactionModeBackfill = loadedAllowedGroups.some(group => !group.reactionMode)
-                || migratedGroups.some(group => !group.reactionMode);
             this.allowList = loadedAllowList.filter(c => !SessionManager.isGroupJid(c.number));
             this.allowedGroups = this.mergeContacts(loadedAllowedGroups, migratedGroups);
             this.ignoredNumbers = (config.ignoredNumbers || []).map(cleanContact).filter(Boolean) as Contact[];
@@ -99,7 +93,7 @@ export class SessionManager {
             this.visionModel = config.visionModel || 'gpt-4o';
             this.operatorJid = config.operatorJid || '';
 
-            if (recovered || needsReactionModeBackfill) {
+            if (recovered) {
                 await this.saveConfig();
             }
         } catch {
@@ -258,7 +252,7 @@ export class SessionManager {
 
         const existing = this.allowedGroups.find(c => c.number === groupJid);
         if (!existing) {
-            this.allowedGroups.push({ number: groupJid, name, reactionMode: 'active' });
+            this.allowedGroups.push({ number: groupJid, name });
             this.ignoredNumbers = this.ignoredNumbers.filter(c => c.number !== groupJid);
             await this.saveConfig();
             return;
@@ -266,11 +260,6 @@ export class SessionManager {
 
         if (name && !existing.name) {
             existing.name = name;
-            await this.saveConfig();
-        }
-
-        if (!existing.reactionMode) {
-            existing.reactionMode = 'active';
             await this.saveConfig();
         }
     }
@@ -334,20 +323,6 @@ export class SessionManager {
         await this.saveConfig();
     }
 
-    getAllowedGroupReactionMode(groupJid: string): ReactionMode {
-        return this.getAllowedGroup(groupJid)?.reactionMode || 'active';
-    }
-
-    async setAllowedGroupReactionMode(groupJid: string, reactionMode: ReactionMode) {
-        const group = this.getAllowedGroup(groupJid);
-        if (!group) {
-            return;
-        }
-
-        group.reactionMode = reactionMode;
-        await this.saveConfig();
-    }
-
     async removeAllowedGroupAlias(groupJid: string) {
         const group = this.getAllowedGroup(groupJid);
         if (!group || !group.name) {
@@ -391,15 +366,9 @@ export class SessionManager {
                 if (!existing.name && contact.name) {
                     existing.name = contact.name;
                 }
-                if (!existing.reactionMode && contact.reactionMode) {
-                    existing.reactionMode = contact.reactionMode;
-                }
             }
         }
-        return merged.map(contact => ({
-            ...contact,
-            reactionMode: contact.reactionMode || 'active'
-        }));
+        return merged;
     }
 
     public async isRegistered(): Promise<boolean> {

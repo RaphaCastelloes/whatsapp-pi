@@ -1,6 +1,6 @@
 ﻿# whatsapp-pi Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-05-11
+Auto-generated from all feature plans. Last updated: 2026-05-16
 
 ## Active Technologies
 - [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION] (002-manual-whatsapp-connection)
@@ -30,6 +30,8 @@ Auto-generated from all feature plans. Last updated: 2026-05-11
 - Local filesystem under `.pi-data/whatsapp/documents/` (027-pdf-document-parsing)
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pino`, `qrcode-terminal`, `pi-agent-sdk` (028-group-reaction-mode)
 - Local file config in `~/.pi/whatsapp-pi/config.json` (028-group-reaction-mode)
+- TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`, `pino`, `qrcode-terminal` (033-remove-reaction-mode)
+- Local file-based app state under `~/.pi/whatsapp-pi/` (033-remove-reaction-mode)
 
 - TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `qrcode-terminal`, `pi-agent-sdk` (assumed name for Pi extension API) (001-whatsapp-tui-integration)
 
@@ -49,6 +51,7 @@ npm test; npm run lint
 TypeScript 5.x / Node.js 20+: Follow standard conventions
 
 ## Recent Changes
+- 033-remove-reaction-mode: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pi-agent-sdk`, `pino`, `qrcode-terminal`
 - 028-group-reaction-mode: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `pino`, `qrcode-terminal`, `pi-agent-sdk`
 - 027-pdf-document-parsing: Added TypeScript 5.x / Node.js 20+ + `@whiskeysockets/baileys`, `@llamaindex/liteparse`, `pino`, `qrcode-terminal`, `@mariozechner/pi-coding-agent`
 
