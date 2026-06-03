@@ -4,11 +4,10 @@ import { join } from 'node:path';
 
 const mocks = vi.hoisted(() => ({
     downloadContentFromMessage: vi.fn(),
-    exec: vi.fn(),
     existsSync: vi.fn(),
+    execFile: vi.fn(),
     homedir: vi.fn(),
     mkdir: vi.fn().mockResolvedValue(undefined),
-    readFile: vi.fn(),
     writeFile: vi.fn().mockResolvedValue(undefined)
 }));
 
@@ -17,24 +16,21 @@ vi.mock('baileys', () => ({
 }));
 
 vi.mock('node:child_process', () => ({
-    exec: mocks.exec
+    execFile: mocks.execFile
 }));
 
 vi.mock('node:fs', () => ({
     existsSync: mocks.existsSync
 }));
 
-vi.mock('node:fs/promises', () => ({
-    mkdir: mocks.mkdir,
-    readFile: mocks.readFile,
-    writeFile: mocks.writeFile
-}));
-
 vi.mock('node:os', () => ({
     homedir: mocks.homedir
 }));
 
-import { AudioService } from '../../src/services/audio.service.ts';
+vi.mock('node:fs/promises', () => ({
+    mkdir: mocks.mkdir,
+    writeFile: mocks.writeFile
+}));
 
 const createStream = (...chunks: Buffer[]) => (async function* () {
     for (const chunk of chunks) {
@@ -42,22 +38,36 @@ const createStream = (...chunks: Buffer[]) => (async function* () {
     }
 })();
 
-const setupService = () => new AudioService();
+const logger = {
+    log: vi.fn(),
+    error: vi.fn()
+};
+
+const whisperTranscriber = {
+    transcribe: vi.fn()
+};
+
+let AudioService: typeof import('../../src/services/audio.service.ts').AudioService;
+
+const setupService = () => new AudioService(logger as any, whisperTranscriber as any);
 
 describe('AudioService', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         resetI18n();
         vi.clearAllMocks();
         vi.spyOn(console, 'error').mockImplementation(() => {});
+        logger.log.mockClear();
+        logger.error.mockClear();
         vi.spyOn(Date, 'now').mockReturnValue(1234567890);
         mocks.homedir.mockReturnValue('/home/test');
-        mocks.exec.mockImplementation((_command: string, callback: (error?: Error | null, stdout?: string, stderr?: string) => void) => {
-            callback(null, '', '');
+        mocks.downloadContentFromMessage.mockResolvedValue(createStream(Buffer.from('media')));
+        mocks.existsSync.mockReturnValue(true);
+        mocks.execFile.mockImplementation((_command: string, _args: string[], callback: (error?: Error | null) => void) => {
+            callback(null);
             return undefined;
         });
-        mocks.downloadContentFromMessage.mockResolvedValue(createStream(Buffer.from('media')));
-        mocks.readFile.mockResolvedValue('transcribed text');
-        mocks.existsSync.mockImplementation((target: string | Buffer | URL) => String(target).endsWith('.txt'));
+        whisperTranscriber.transcribe.mockResolvedValue('transcribed text');
+        ({ AudioService } = await import('../../src/services/audio.service.ts'));
     });
 
     it('creates media directory when it does not exist', () => {
@@ -72,7 +82,7 @@ describe('AudioService', () => {
         mocks.downloadContentFromMessage.mockResolvedValue(
             createStream(Buffer.from('part-1'), Buffer.from('part-2'))
         );
-        mocks.readFile.mockResolvedValue('  áudio transcrito  \n');
+        whisperTranscriber.transcribe.mockResolvedValue('  áudio transcrito  \n');
 
         const service = setupService();
         const audioMessage = { id: 'audio-1' };
@@ -81,67 +91,25 @@ describe('AudioService', () => {
 
         const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
         const inputPath = join(mediaDir, 'audio_1234567890.ogg');
-        const whisperPath = process.platform === 'win32'
-            ? 'whisper'
-            : join('/home/test', '.local', 'bin', 'whisper');
-        const command = `${whisperPath} "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
+        const wavPath = join(mediaDir, 'audio_1234567890.wav');
 
         expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(audioMessage, 'audio');
         expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]));
-        expect(mocks.exec).toHaveBeenCalledWith(command, expect.any(Function));
-        expect(mocks.readFile).toHaveBeenCalledWith(join(mediaDir, 'audio_1234567890.txt'), 'utf8');
+        expect(mocks.execFile).toHaveBeenCalledWith('ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true });
+        expect(whisperTranscriber.transcribe).toHaveBeenCalledWith(wavPath);
+        expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio download: 0 ms');
+        expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio write file: 0 ms');
+        expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio convert: 0 ms');
+        expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio whisper: 0 ms');
+        expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio total: 0 ms');
     });
 
-    it('tries whisper command on Windows before python', async () => {
-        const originalPlatform = process.platform;
-        Object.defineProperty(process, 'platform', { value: 'win32' });
-
-        try {
-            const service = setupService();
-            await service.transcribe({ id: 'audio-1' } as any);
-
-            const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
-            const inputPath = join(mediaDir, 'audio_1234567890.ogg');
-            const command = `whisper "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
-
-            expect(mocks.exec).toHaveBeenCalledWith(command, expect.any(Function));
-        } finally {
-            Object.defineProperty(process, 'platform', { value: originalPlatform });
-        }
-    });
-
-    it('uses the local whisper binary path on non-Windows platforms', async () => {
-        const originalPlatform = process.platform;
-        Object.defineProperty(process, 'platform', { value: 'linux' });
-
-        try {
-            const service = setupService();
-            await service.transcribe({ id: 'audio-1' } as any);
-
-            const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
-            const inputPath = join(mediaDir, 'audio_1234567890.ogg');
-            const command = `${join('/home/test', '.local', 'bin', 'whisper')} "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
-
-            expect(mocks.exec).toHaveBeenCalledWith(command, expect.any(Function));
-        } finally {
-            Object.defineProperty(process, 'platform', { value: originalPlatform });
-        }
-    });
-
-    it('returns fallback when transcription output file is missing', async () => {
-        mocks.existsSync.mockImplementation((target: string | Buffer | URL) => !String(target).endsWith('.txt'));
+    it('returns fallback when transcription output is empty', async () => {
+        whisperTranscriber.transcribe.mockResolvedValue('');
 
         const service = setupService();
 
         await expect(service.transcribe({ id: 'audio-2' } as any)).resolves.toBe('[Empty transcription]');
-    });
-
-    it('returns empty string when transcription output contains only whitespace', async () => {
-        mocks.readFile.mockResolvedValue('  \n\t  ');
-
-        const service = setupService();
-
-        await expect(service.transcribe({ id: 'audio-3' } as any)).resolves.toBe('');
     });
 
     it('returns formatted error when audio download fails', async () => {
@@ -151,21 +119,6 @@ describe('AudioService', () => {
 
         await expect(service.transcribe({ id: 'audio-4' } as any)).resolves.toBe(
             '[Transcription error: download failed]'
-        );
-
-        expect(console.error).toHaveBeenCalledWith('[AudioService] Transcription error:', expect.any(Error));
-    });
-
-    it('returns formatted error when transcription execution fails', async () => {
-        mocks.exec.mockImplementation((_command: string, callback: (error?: Error | null, stdout?: string, stderr?: string) => void) => {
-            callback(new Error('whisper failed'));
-            return undefined;
-        });
-
-        const service = setupService();
-
-        await expect(service.transcribe({ id: 'audio-5' } as any)).resolves.toBe(
-            '[Transcription error: whisper failed]'
         );
 
         expect(console.error).toHaveBeenCalledWith('[AudioService] Transcription error:', expect.any(Error));

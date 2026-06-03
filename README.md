@@ -26,7 +26,7 @@ Pi is a powerful agentic AI coding assistant that operates in your terminal. Thi
 - **Group-Only Mode**: Bind the agent to a single WhatsApp group with `--whatsapp-group`
 - **Media Support**: 
   - **Vision Analysis**: Automatically forwards WhatsApp images to Pi for analysis.
-  - **Audio Transcription**: Transcribes voice notes when Whisper is installed.
+  - **Audio Transcription**: Transcribes voice notes locally with Whisper.cpp (`whisper-cpp-node`); `ffmpeg` is used to convert WhatsApp audio to 16 kHz mono WAV first.
   - **Document Handling**: Downloads and stores documents (PDF, text) for agent access; PDFs include a bounded text preview when readable.
 
 ## Prerequisites
@@ -59,10 +59,14 @@ See the [Pi documentation](https://pi.dev/docs/latest) for full setup, providers
 
 ### Audio Transcription
 
-To enable audio transcription features:
+Audio transcription uses `whisper-cpp-node` and `ffmpeg`.
+
+Install dependencies:
 ```bash
-python -m pip install -U openai-whisper
+npm install
 ```
+
+Make sure `ffmpeg` is available in PATH.
 
 PDF documents are parsed locally and do not require extra system utilities.
 If a PDF cannot be parsed automatically, it is still saved and forwarded with a clear fallback notice.
@@ -109,7 +113,7 @@ npm install
 pi -e whatsapp-pi.ts
 ```
 
-For verbose mode (shows Baileys trace logs for debugging):
+For verbose mode (shows Baileys trace logs and audio timing logs for debugging):
 ```bash
 pi -e whatsapp-pi.ts --verbose
 ```
@@ -168,8 +172,6 @@ The three read-only tools query the local recents store at `~/.pi/agent/extensio
 - **Add Group** - Add a WhatsApp group JID to the allowed groups list (format: 120363012345@g.us)
 - **Select a group** - Open a submenu with **History**, **Send Message**, **Print Group JID**, **Add Alias**, **Remove Alias**, **Remove Group**, and **Back**
 
-- **Back** - Return to main menu
-
 ### Recents Management
 - **History** - Open full message history for that conversation
 - **Send Message** - Send a new message without Pi suffix
@@ -187,7 +189,6 @@ Send these commands directly in WhatsApp to control the agent session:
 
 ```
 src/
-├── models/          # Type definitions
 ├── services/        # Core services (WhatsApp, Session, Recents, Media)
 └── ui/              # Menu handlers and TUI views
 
@@ -202,17 +203,10 @@ Run tests:
 npm test
 ```
 
-## Implementation Notes
+## Notes
 
-### Recent Feature Updates (2026-05)
-
-- **Auto-Connect Support**: Use the `--whatsapp-pi-online` flag to connect on startup when credentials already exist.
-- **Group-Only Mode**: Use `--whatsapp-group <jid>` to bind Pi to a single WhatsApp group. The group must also be present in Allowed Groups.
-- **Allowed Group Reaction Mode**: Each allowed group can be set to Active or Passive. Passive mode only replies when the bot is directly mentioned with @.
-- **Recents Store**: Recent conversations and message history are persisted in `~/.pi/agent/extensions/whatsapp-pi/recents/recents.json`.
-- **Message Detail / Reply**: Open a message from history to inspect full content and reply with `R`.
-- **Media Support**: Images are forwarded for vision analysis, audio is transcribed with Whisper, and PDFs are saved under `./.pi-data/whatsapp/documents/` with local text preview when available.
-- **Session Handling**: Saved state, allow list, and startup reconnects are restored automatically when available.
-- **Intelligent Message Filtering**: Messages ending with `π` are ignored to prevent bot loops.
-- **Storage Management**: Persistent data lives under `.pi-data/` plus the recents store in the user home directory.
-- **Improved Test Coverage (v1.0.59)**: Added unit tests for the `message_end` auto-reply handler, covering the happy path, disconnected guard, role guard, send failure, thrown exceptions, and the `send_wa_message` dedup flag. Fixed a Windows path separator bug in the recents service test suite.
+- `--whatsapp-pi-online` auto-connects when credentials already exist.
+- `--whatsapp-group <jid>` binds Pi to one WhatsApp group.
+- Media handling is local: images for vision, audio via Whisper.cpp + ffmpeg, documents stored under `.pi-data/whatsapp/documents/`.
+- Recents/history live in `~/.pi/agent/extensions/whatsapp-pi/recents/recents.json`.
+- Session state, allow lists, and startup reconnects are persisted locally.

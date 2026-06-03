@@ -2,9 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Unit tests for the send_wa_message tool execute logic.
- *
- * The tool's execute function is a closure over whatsappService and recentsService.
- * We replicate the exact logic here with mocked services so it can be tested in isolation.
  */
 
 interface MockWhatsAppService {
@@ -25,7 +22,8 @@ interface MockRecentsService {
 async function executeToolLogic(
     params: { jid: string; message: string },
     whatsappService: MockWhatsAppService,
-    recentsService: MockRecentsService
+    recentsService: MockRecentsService,
+    logger: { log: (message: string) => void }
 ) {
     if (whatsappService.getStatus() !== 'connected') {
         return {
@@ -39,7 +37,7 @@ async function executeToolLogic(
         .map((line) => `    ${line}`)
         .join('\n');
 
-    console.log([
+    logger.log([
         '[WhatsApp-Pi] Outgoing WhatsApp message',
         `  To: ${params.jid}`,
         '  Message:',
@@ -56,14 +54,14 @@ async function executeToolLogic(
             direction: 'outgoing',
             timestamp: Date.now()
         });
-        console.log([
+        logger.log([
             '[WhatsApp-Pi] Outgoing WhatsApp message result',
             `  To: ${params.jid}`,
             '  Status: sent',
             `  MessageId: ${result.messageId ?? 'unknown'}`
         ].join('\n'));
     } else {
-        console.log([
+        logger.log([
             '[WhatsApp-Pi] Outgoing WhatsApp message result',
             `  To: ${params.jid}`,
             '  Status: failed',
@@ -80,10 +78,10 @@ async function executeToolLogic(
 describe('send_wa_message tool', () => {
     let whatsappService: MockWhatsAppService;
     let recentsService: MockRecentsService;
-    let logSpy: ReturnType<typeof vi.spyOn>;
+    let logger: { log: ReturnType<typeof vi.fn> };
 
     beforeEach(() => {
-        logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        logger = { log: vi.fn() };
         whatsappService = {
             getStatus: vi.fn().mockReturnValue('connected'),
             sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 })
@@ -104,7 +102,8 @@ describe('send_wa_message tool', () => {
             const result = await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(result.isError).toBe(true);
@@ -113,14 +112,15 @@ describe('send_wa_message tool', () => {
             expect(parsed.error).toBe('WhatsApp not connected');
             expect(parsed.attempts).toBe(0);
             expect(whatsappService.sendMessage).not.toHaveBeenCalled();
-            expect(logSpy).not.toHaveBeenCalled();
+            expect(logger.log).not.toHaveBeenCalled();
         });
 
         it('returns success result with messageId when delivery succeeds', async () => {
             const result = await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(result.isError).toBe(false);
@@ -129,8 +129,8 @@ describe('send_wa_message tool', () => {
             expect(parsed.messageId).toBe('MSG123');
             expect(parsed.attempts).toBe(1);
             expect(parsed.error).toBeUndefined();
-            expect(logSpy).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
-            expect(logSpy).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: sent\n  MessageId: MSG123');
+            expect(logger.log).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
+            expect(logger.log).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: sent\n  MessageId: MSG123');
         });
 
         it('returns failure result with error description when delivery fails', async () => {
@@ -143,7 +143,8 @@ describe('send_wa_message tool', () => {
             const result = await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(result.isError).toBe(true);
@@ -152,8 +153,8 @@ describe('send_wa_message tool', () => {
             expect(parsed.error).toBe('Socket timed out');
             expect(parsed.attempts).toBe(3);
             expect(parsed.messageId).toBeUndefined();
-            expect(logSpy).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
-            expect(logSpy).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: failed\n  Error: Socket timed out');
+            expect(logger.log).toHaveBeenNthCalledWith(1, '[WhatsApp-Pi] Outgoing WhatsApp message\n  To: 5511999998888@s.whatsapp.net\n  Message:\n    Hello');
+            expect(logger.log).toHaveBeenNthCalledWith(2, '[WhatsApp-Pi] Outgoing WhatsApp message result\n  To: 5511999998888@s.whatsapp.net\n  Status: failed\n  Error: Socket timed out');
         });
     });
 
@@ -162,7 +163,8 @@ describe('send_wa_message tool', () => {
             await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello recents' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(recentsService.recordMessage).toHaveBeenCalledOnce();
@@ -184,7 +186,8 @@ describe('send_wa_message tool', () => {
             await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(recentsService.recordMessage).not.toHaveBeenCalled();
@@ -196,7 +199,8 @@ describe('send_wa_message tool', () => {
             await executeToolLogic(
                 { jid: '5511999998888@s.whatsapp.net', message: 'Hello' },
                 whatsappService,
-                recentsService
+                recentsService,
+                logger
             );
 
             expect(recentsService.recordMessage).not.toHaveBeenCalled();

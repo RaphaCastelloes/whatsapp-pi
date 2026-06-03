@@ -43,8 +43,8 @@ export default function (pi: ExtensionAPI) {
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const recentsService = new RecentsService(sessionManager);
-    const audioService = new AudioService();
     const logger = new WhatsAppPiLogger(false);
+    const audioService = new AudioService(logger);
     const incomingMediaService = new IncomingMediaService(audioService, logger);
     const menuHandler = new MenuHandler(whatsappService, sessionManager, recentsService);
     let _ctx: ExtensionContext | undefined;
@@ -315,20 +315,21 @@ export default function (pi: ExtensionAPI) {
                 };
             }
 
-            const formattedMessage = params.message
+            const message = params.message ?? '';
+            const formattedMessage = message
                 .split('\n')
-                .map((line) => `    ${line}`)
+                .map((line: string) => `    ${line}`)
                 .join('\n');
 
-            console.log([
+            logger.log([
                 t("log.outgoing.title"),
-                t("log.outgoing.to", { jid: params.jid }),
+                t("log.outgoing.to", { jid: resolvedJid }),
                 t("log.outgoing.message"),
                 formattedMessage
             ].join('\n'));
 
             const outboundJid = whatsappService.resolveOutboundRecipientJid(resolvedJid);
-            const result = await whatsappService.sendMessage(outboundJid, params.message);
+            const result = await whatsappService.sendMessage(outboundJid, message);
 
             if (result.success) {
                 // Mark that tool already sent to this JID — prevents message_end from re-sending
@@ -336,20 +337,20 @@ export default function (pi: ExtensionAPI) {
                 await recentsService.recordMessage({
                     messageId: result.messageId!,
                     senderNumber: toRecentSenderNumber(outboundJid),
-                    text: params.message,
+                    text: message,
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
-                console.log([
+                logger.log([
                     t("log.result.title"),
-                    t("log.outgoing.to", { jid: params.jid }),
+                    t("log.outgoing.to", { jid: resolvedJid }),
                     t("log.result.status.sent"),
                     t("log.result.messageId", { messageId: result.messageId ?? t("log.unknownMessageId") })
                 ].join('\n'));
             } else {
-                console.log([
+                logger.log([
                     t("log.result.title"),
-                    t("log.outgoing.to", { jid: params.jid }),
+                    t("log.outgoing.to", { jid: resolvedJid }),
                     t("log.result.status.failed"),
                     t("log.result.error", { error: result.error ?? t("log.unknownError") })
                 ].join('\n'));
@@ -388,9 +389,9 @@ export default function (pi: ExtensionAPI) {
             // Create sender with the socket
             const sender = new ReactionSender(socket as any);
             const result = await sender.sendReaction({
-                jid: params.jid,
-                messageId: params.messageId,
-                emoji: params.emoji
+                jid: params.jid ?? '',
+                messageId: params.messageId ?? '',
+                emoji: params.emoji ?? ''
             });
 
             return {

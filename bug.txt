@@ -1,16 +1,4 @@
-AudioService] Transcription error: Error: Command failed: python -m whisper "C:\Users\caste\.pi\agent\extension\whatsapp-pi\whatsapp-medias\audio_1780448794911.ogg" --model small --language pt --output_format txt --output_dir "C:\Users\caste\.pi\agent\extension\whatsapp-pi\whatsapp-medias" --fp16 False
-Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.: Ready 🟢 | | WhatsApp: Connected to 2 chats
-
-    at genericNodeError (node:internal/errors:985:15)
-    at wrappedFn (node:internal/errors:539:14)
-    at ChildProcess.exithandler (node:child_process:417:12)
-    at ChildProcess.emit (node:events:509:28)
-    at maybeClose (node:internal/child_process:1124:16)
-    at ChildProcess._handle.onexit (node:internal/child_process:306:5)
-    at Process.callbackTrampoline (node:internal/async_hooks:130:17) {
-  code: 9009,
-  killed: false,
-  signal: null,
-  cmd: 'python -m whisper "C:\\Users\\caste\\.pi\\agent\\extension\\whatsapp-pi\\whatsapp-medias\\audio_1780448794911.ogg" --model small --language pt --output_format txt --output_dir "C:\\Users\\caste\\.pi\\agent\\extension\\whatsapp-pi\\whatsapp-medias" --fp16 False',
-  stdout: '',
-  stderr: 'Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.\r\n'
+[AudioService] Transcription error: Error: whisper-cpp-node unavailable
+    at AudioService.transcribe (C:\Users\caste\repos\whatsapp-pi\src\services\audio.service.ts:53:15)t-5.4-mini • medium
+    at async IncomingMediaService.processAudio (C:\Users\caste\repos\whatsapp-pi\src\services\incoming-media.service.ts:44:27)
+    at async WhatsAppService.onMessage (C:/Users/caste/repos/whatsapp-pi/whatsapp-pi.ts:246:50)

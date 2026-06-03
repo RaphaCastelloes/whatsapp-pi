@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-pi",
-  "version": "1.0.68",
+  "version": "1.0.69",
   "type": "module",
   "description": "WhatsApp integration extension for Pi",
   "main": "whatsapp-pi.ts",
@@ -33,9 +33,11 @@
   },
   "dependencies": {
     "@llamaindex/liteparse": "^1.5.3",
+    "@sinclair/typebox": "^0.27.10",
     "baileys": "^6.7.21",
     "pino": "^10.3.1",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "whisper-cpp-node": "^0.2.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
