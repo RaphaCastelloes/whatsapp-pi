@@ -65,7 +65,7 @@ describe('AudioService', () => {
 
         setupService();
 
-        expect(mocks.mkdir).toHaveBeenCalledWith(join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias'), { recursive: true });
+        expect(mocks.mkdir).toHaveBeenCalledWith(join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias'), { recursive: true });
     });
 
     it('returns trimmed transcription text for a successful audio transcription', async () => {
@@ -79,7 +79,7 @@ describe('AudioService', () => {
 
         await expect(service.transcribe(audioMessage as any)).resolves.toBe('áudio transcrito');
 
-        const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
+        const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
         const inputPath = join(mediaDir, 'audio_1234567890.ogg');
         const whisperPath = process.platform === 'win32'
             ? 'whisper'
@@ -100,7 +100,7 @@ describe('AudioService', () => {
             const service = setupService();
             await service.transcribe({ id: 'audio-1' } as any);
 
-            const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
+            const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
             const inputPath = join(mediaDir, 'audio_1234567890.ogg');
             const command = `whisper "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
 
@@ -118,7 +118,7 @@ describe('AudioService', () => {
             const service = setupService();
             await service.transcribe({ id: 'audio-1' } as any);
 
-            const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
+            const mediaDir = join('/home/test', '.pi', 'agent', 'extensions', 'whatsapp-pi', 'whatsapp-medias');
             const inputPath = join(mediaDir, 'audio_1234567890.ogg');
             const command = `${join('/home/test', '.local', 'bin', 'whisper')} "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
 

@@ -138,7 +138,7 @@ The extension registers the following tools that the Pi agent can call:
 | `get_wa_conversation_history` | read-only | Get the most recent messages with a given `senderNumber` (accepts `+E164`, raw digits, or a JID). Supports `limit`. |
 | `check_wa_new_messages` | read-only | List conversations whose most recent message is incoming (i.e. waiting for a reply). Supports `sinceTimestamp` (ms epoch). |
 
-The three read-only tools query the local recents store at `~/.pi/agent/extension/whatsapp-pi/recents/recents.json`. They never touch the network and do not mark messages as read.
+The three read-only tools query the local recents store at `~/.pi/agent/extensions/whatsapp-pi/recents/recents.json`. They never touch the network and do not mark messages as read.
 
 ## WhatsApp Numbers and JIDs
 
@@ -209,7 +209,7 @@ npm test
 - **Auto-Connect Support**: Use the `--whatsapp-pi-online` flag to connect on startup when credentials already exist.
 - **Group-Only Mode**: Use `--whatsapp-group <jid>` to bind Pi to a single WhatsApp group. The group must also be present in Allowed Groups.
 - **Allowed Group Reaction Mode**: Each allowed group can be set to Active or Passive. Passive mode only replies when the bot is directly mentioned with @.
-- **Recents Store**: Recent conversations and message history are persisted in `~/.pi/agent/extension/whatsapp-pi/recents/recents.json`.
+- **Recents Store**: Recent conversations and message history are persisted in `~/.pi/agent/extensions/whatsapp-pi/recents/recents.json`.
 - **Message Detail / Reply**: Open a message from history to inspect full content and reply with `R`.
 - **Media Support**: Images are forwarded for vision analysis, audio is transcribed with Whisper, and PDFs are saved under `./.pi-data/whatsapp/documents/` with local text preview when available.
 - **Session Handling**: Saved state, allow list, and startup reconnects are restored automatically when available.

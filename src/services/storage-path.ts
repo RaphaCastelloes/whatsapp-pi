@@ -3,11 +3,11 @@ import { homedir } from 'os';
 import { join } from 'path';
 
 export function getDefaultStorageRoot(): string {
-    return join(homedir(), '.pi', 'agent', 'extension', 'whatsapp-pi');
+    return join(homedir(), '.pi', 'agent', 'extensions', 'whatsapp-pi');
 }
 
 export function getDefaultLegacyStorageRoot(): string {
-    return join(homedir(), '.pi', 'whatsapp-pi');
+    return join(homedir(), '.pi', 'agent', 'extension', 'whatsapp-pi');
 }
 
 export interface StoragePaths {
@@ -71,20 +71,26 @@ async function copyEntry(source: string, target: string) {
 }
 
 export async function migrateLegacyStorage(paths: Pick<StoragePaths, 'root' | 'legacyRoot'>): Promise<boolean> {
-    if (paths.root === paths.legacyRoot) {
-        return false;
-    }
+    const legacyRoots = [paths.legacyRoot, join(homedir(), '.pi', 'whatsapp-pi')]
+        .filter((root, index, roots) => root && roots.indexOf(root) === index && root !== paths.root);
 
-    if (!(await pathExists(paths.legacyRoot))) {
-        return false;
-    }
+    let migrated = false;
 
     await mkdir(paths.root, { recursive: true });
-    const entries = await readdir(paths.legacyRoot, { withFileTypes: true });
 
-    for (const entry of entries) {
-        await copyEntry(join(paths.legacyRoot, entry.name), join(paths.root, entry.name));
+    for (const legacyRoot of legacyRoots) {
+        if (!(await pathExists(legacyRoot))) {
+            continue;
+        }
+
+        const entries = await readdir(legacyRoot, { withFileTypes: true });
+
+        for (const entry of entries) {
+            await copyEntry(join(legacyRoot, entry.name), join(paths.root, entry.name));
+        }
+
+        migrated = true;
     }
 
-    return true;
+    return migrated;
 }
