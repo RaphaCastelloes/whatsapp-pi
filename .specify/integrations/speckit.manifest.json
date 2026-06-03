@@ -1,6 +1,8 @@
 {
   "integration": "speckit",
-  "version": "0.5.1.dev0",
+  "version": "0.8.14.dev0",
   "installed_at": "2026-04-15T09:56:22.619173+00:00",
-  "files": {}
+  "files": {
+    ".specify/scripts/powershell/setup-tasks.ps1": "aa7b19077dc4f6feee1dae47f68dc3e6d8ac75adf572a949443f3322b753cfa2"
+  }
 }

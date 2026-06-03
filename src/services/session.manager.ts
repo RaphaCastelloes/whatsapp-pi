@@ -1,9 +1,16 @@
 import { useMultiFileAuthState } from 'baileys';
 import { basename, join } from 'path';
 import { readFile, writeFile, mkdir, rm, rename, readdir } from 'fs/promises';
-import { homedir } from 'os';
 import { SessionStatus } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
+import {
+    getDefaultLegacyStorageRoot,
+    getDefaultStorageRoot,
+    createStoragePaths,
+    ensureStorageDirectories as ensureStorageRoots,
+    migrateLegacyStorage,
+    type StoragePaths
+} from './storage-path.js';
 
 export interface Contact {
     number: string;
@@ -12,10 +19,9 @@ export interface Contact {
 }
 
 export class SessionManager {
-    // Data is stored in the user's home directory to persist across updates
-    private readonly baseDir = join(homedir(), '.pi', 'whatsapp-pi');
-    private authStateDir = join(this.baseDir, 'auth');
-    private readonly configPath = join(this.baseDir, 'config.json');
+    private readonly storagePaths: StoragePaths;
+    private authStateDir: string;
+    private readonly configPath: string;
 
     static isGroupJid(jid: string): boolean {
         return jid.endsWith('@g.us');
@@ -27,7 +33,7 @@ export class SessionManager {
      */
     setGroupJidForAuth(groupJid: string) {
         const sanitized = groupJid.replace(/[^a-zA-Z0-9]/g, '_');
-        this.authStateDir = join(this.baseDir, `auth-${sanitized}`);
+        this.authStateDir = join(this.storagePaths.root, `auth-${sanitized}`);
     }
 
     private status: SessionStatus = 'logged-out';
@@ -40,20 +46,32 @@ export class SessionManager {
     private operatorJid: string = '';
     private configLoaded = false;
 
-    constructor(baseDir = join(homedir(), '.pi', 'whatsapp-pi')) {
-        this.baseDir = baseDir;
-        this.authStateDir = join(this.baseDir, 'auth');
-        this.configPath = join(this.baseDir, 'config.json');
+    constructor(baseDir = getDefaultStorageRoot(), legacyBaseDir = baseDir === getDefaultStorageRoot() ? getDefaultLegacyStorageRoot() : baseDir) {
+        this.storagePaths = createStoragePaths(baseDir, legacyBaseDir);
+        this.authStateDir = this.storagePaths.authStateDir;
+        this.configPath = this.storagePaths.configPath;
     }
 
     private async ensureStorageDirectories() {
-        await mkdir(this.baseDir, { recursive: true });
-        await mkdir(this.authStateDir, { recursive: true });
+        await ensureStorageRoots({
+            root: this.storagePaths.root,
+            authStateDir: this.authStateDir,
+            recentsDir: this.storagePaths.recentsDir,
+            logDir: this.storagePaths.logDir
+        });
+    }
+
+    private async migrateLegacyStorageIfNeeded() {
+        await migrateLegacyStorage({
+            root: this.storagePaths.root,
+            legacyRoot: this.storagePaths.legacyRoot
+        });
     }
 
     public async ensureInitialized() {
         try {
             await this.ensureStorageDirectories();
+            await this.migrateLegacyStorageIfNeeded();
             await this.cleanupStaleConfigTempFiles();
             if (!this.configLoaded) {
                 await this.loadConfig();
@@ -173,7 +191,7 @@ export class SessionManager {
                 visionModel: this.visionModel,
                 operatorJid: this.operatorJid
             };
-            await mkdir(this.baseDir, { recursive: true });
+            await mkdir(this.storagePaths.root, { recursive: true });
             const serialized = JSON.stringify(config, null, 2);
             await writeFile(tempPath, serialized);
             try {
@@ -194,14 +212,14 @@ export class SessionManager {
         let files: string[];
 
         try {
-            files = await readdir(this.baseDir);
+            files = await readdir(this.storagePaths.root);
         } catch {
             return;
         }
 
         await Promise.all(files
             .filter(fileName => fileName.startsWith(`${configFileName}.`) && fileName.endsWith('.tmp'))
-            .map(fileName => this.removeConfigTempFile(join(this.baseDir, fileName))));
+            .map(fileName => this.removeConfigTempFile(join(this.storagePaths.root, fileName))));
     }
 
     private async removeConfigTempFile(tempPath: string) {

@@ -1,6 +1,5 @@
-import { homedir } from 'os';
-import { join } from 'path';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
+import { createStoragePaths, ensureStorageDirectories as ensureStorageRoots, migrateLegacyStorage } from './storage-path.js';
 import type {
     MessageDirection,
     RecentConversationMessage,
@@ -19,9 +18,9 @@ export interface RecentsMessageInput {
 }
 
 export class RecentsService {
-    private readonly baseDir = join(homedir(), '.pi', 'whatsapp-pi');
-    private readonly dataDir = join(this.baseDir, 'recents');
-    private readonly storePath = join(this.dataDir, 'recents.json');
+    private readonly storagePaths = createStoragePaths();
+    private readonly dataDir = this.storagePaths.recentsDir;
+    private readonly storePath = this.storagePaths.recentsPath;
     private store: RecentsStore = {
         conversations: [],
         messagesBySender: {},
@@ -31,7 +30,16 @@ export class RecentsService {
     constructor(private readonly sessionManager: SessionManager) {}
 
     async ensureInitialized() {
-        await mkdir(this.dataDir, { recursive: true });
+        await ensureStorageRoots({
+            root: this.storagePaths.root,
+            authStateDir: this.storagePaths.authStateDir,
+            recentsDir: this.dataDir,
+            logDir: this.storagePaths.logDir
+        });
+        await migrateLegacyStorage({
+            root: this.storagePaths.root,
+            legacyRoot: this.storagePaths.legacyRoot
+        });
         await this.loadStore();
     }
 

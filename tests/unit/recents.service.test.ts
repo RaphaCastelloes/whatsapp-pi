@@ -35,7 +35,7 @@ describe('RecentsService', () => {
         await service.ensureInitialized();
 
         expect(fsMocks.mkdir).toHaveBeenCalledWith(
-            'C:\\Users\\test\\.pi\\whatsapp-pi\\recents',
+            'C:\\Users\\test\\.pi\\agent\\extension\\whatsapp-pi\\recents',
             { recursive: true }
         );
         await expect(service.getRecentConversations()).resolves.toEqual([]);

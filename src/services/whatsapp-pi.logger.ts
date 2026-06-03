@@ -1,16 +1,15 @@
 import { appendFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { createStoragePaths } from './storage-path.js';
 
 export class WhatsAppPiLogger {
     private logFile: string;
 
     constructor(private verbose = false) {
-        const logDir = join(homedir(), '.pi', 'whatsapp-pi');
+        const { logDir, logPath } = createStoragePaths();
         try { mkdirSync(logDir, { recursive: true }); } catch {
             // File logging is best-effort.
         }
-        this.logFile = join(logDir, 'whatsapp-pi.log');
+        this.logFile = logPath;
     }
 
     setVerbose(verbose: boolean) {

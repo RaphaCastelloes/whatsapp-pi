@@ -1,9 +1,9 @@
 {
-  "ai": "windsurf",
+  "ai": "pi",
   "branch_numbering": "sequential",
+  "context_file": "AGENTS.md",
   "here": true,
-  "integration": "windsurf",
-  "preset": null,
+  "integration": "pi",
   "script": "ps",
-  "speckit_version": "0.5.1.dev0"
+  "speckit_version": "0.8.14.dev0"
 }

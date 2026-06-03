@@ -2,10 +2,9 @@ import { WhatsAppService } from './whatsapp.service.js';
 import { MessageRequest, MessageResult, WhatsAppError } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
 import { appendFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { createStoragePaths } from './storage-path.js';
 
-const LOG_FILE = join(homedir(), '.pi', 'whatsapp-pi', 'whatsapp-pi.log');
+const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
     try { appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [MessageSender] ${msg}\n`); } catch {
         // File logging is best-effort.

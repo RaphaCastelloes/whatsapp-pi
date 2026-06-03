@@ -11,10 +11,9 @@ import { MessageSender } from './message.sender.js';
 import { installBaileysConsoleFilter } from './baileys-console-filter.js';
 import { t } from '../i18n.js';
 import { appendFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { createStoragePaths } from './storage-path.js';
 
-const LOG_FILE = join(homedir(), '.pi', 'whatsapp-pi', 'whatsapp-pi.log');
+const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
     try { appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [WhatsApp-Pi] ${msg}\n`); } catch {
         // File logging is best-effort.

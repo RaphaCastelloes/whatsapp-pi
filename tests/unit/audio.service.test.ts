@@ -65,7 +65,7 @@ describe('AudioService', () => {
 
         setupService();
 
-        expect(mocks.mkdir).toHaveBeenCalledWith(join('/home/test', '.pi', 'whatsapp-medias'), { recursive: true });
+        expect(mocks.mkdir).toHaveBeenCalledWith(join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias'), { recursive: true });
     });
 
     it('returns trimmed transcription text for a successful audio transcription', async () => {
@@ -79,10 +79,10 @@ describe('AudioService', () => {
 
         await expect(service.transcribe(audioMessage as any)).resolves.toBe('áudio transcrito');
 
-        const mediaDir = join('/home/test', '.pi', 'whatsapp-medias');
+        const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
         const inputPath = join(mediaDir, 'audio_1234567890.ogg');
         const whisperPath = process.platform === 'win32'
-            ? 'python -m whisper'
+            ? 'whisper'
             : join('/home/test', '.local', 'bin', 'whisper');
         const command = `${whisperPath} "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
 
@@ -90,6 +90,24 @@ describe('AudioService', () => {
         expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]));
         expect(mocks.exec).toHaveBeenCalledWith(command, expect.any(Function));
         expect(mocks.readFile).toHaveBeenCalledWith(join(mediaDir, 'audio_1234567890.txt'), 'utf8');
+    });
+
+    it('tries whisper command on Windows before python', async () => {
+        const originalPlatform = process.platform;
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+
+        try {
+            const service = setupService();
+            await service.transcribe({ id: 'audio-1' } as any);
+
+            const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
+            const inputPath = join(mediaDir, 'audio_1234567890.ogg');
+            const command = `whisper "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
+
+            expect(mocks.exec).toHaveBeenCalledWith(command, expect.any(Function));
+        } finally {
+            Object.defineProperty(process, 'platform', { value: originalPlatform });
+        }
     });
 
     it('uses the local whisper binary path on non-Windows platforms', async () => {
@@ -100,7 +118,7 @@ describe('AudioService', () => {
             const service = setupService();
             await service.transcribe({ id: 'audio-1' } as any);
 
-            const mediaDir = join('/home/test', '.pi', 'whatsapp-medias');
+            const mediaDir = join('/home/test', '.pi', 'agent', 'extension', 'whatsapp-pi', 'whatsapp-medias');
             const inputPath = join(mediaDir, 'audio_1234567890.ogg');
             const command = `${join('/home/test', '.local', 'bin', 'whisper')} "${inputPath}" --model small --language pt --output_format txt --output_dir "${mediaDir}" --fp16 False`;
 

@@ -1,7 +1,15 @@
 {
-  "integration": "windsurf",
-  "version": "0.5.1.dev0",
-  "scripts": {
-    "update-context": ".specify/integrations/windsurf/scripts/update-context.ps1"
-  }
+  "version": "0.8.14.dev0",
+  "integration_state_schema": 1,
+  "installed_integrations": [
+    "pi"
+  ],
+  "integration_settings": {
+    "pi": {
+      "script": "ps",
+      "invoke_separator": "."
+    }
+  },
+  "integration": "pi",
+  "default_integration": "pi"
 }
