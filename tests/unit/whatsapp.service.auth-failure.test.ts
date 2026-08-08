@@ -75,7 +75,7 @@ describe('WhatsAppService auth failure handling', () => {
         vi.restoreAllMocks();
     });
 
-    it('preserves rejected saved auth on manual connect failure', async () => {
+    it('clears rejected saved auth and restarts pairing on manual connect failure', async () => {
         const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
         const sessionManager = createSessionManager();
         const service = new WhatsAppService(sessionManager as any);
@@ -93,10 +93,10 @@ describe('WhatsAppService auth failure handling', () => {
             }
         });
 
-        expect(sessionManager.deleteAuthState).not.toHaveBeenCalled();
-        expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(1);
-        expect(sessionManager.setStatus).toHaveBeenCalledWith('logged-out');
-        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Disconnected');
+        expect(sessionManager.deleteAuthState).toHaveBeenCalledOnce();
+        expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(2);
+        expect(statusCallback).toHaveBeenCalledWith('Session rejected [401] - clearing auth state and starting pairing');
+        expect(statusCallback).toHaveBeenCalledWith('| WhatsApp: Connecting...');
 
         await service.stop();
     });

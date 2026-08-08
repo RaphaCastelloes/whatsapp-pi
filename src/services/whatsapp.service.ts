@@ -477,7 +477,6 @@ export class WhatsAppService {
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         const isBadMac = this.isBadMacError(errorMessage);
         const isAuthRejected = this.isAuthRejected(statusCode, errorMessage);
-        const shouldTreatAsLoggedOut = isBadMac
 
         if (this.intentionalStop) {
             return;
@@ -487,26 +486,41 @@ export class WhatsAppService {
             console.error(t('service.whatsapp.connectionClosed', { statusCode: statusCode ?? 'unknown', shouldReconnect: String(shouldReconnect) }));
         }
 
-        if (shouldTreatAsLoggedOut) {
+        if (isBadMac) {
             if (this.verboseMode) {
-                console.error(t('service.whatsapp.sessionRejected', { statusCode: statusCode ?? 'unknown' }));
-            }
-            if (isBadMac) {
-                if (this.verboseMode) {
-					console.error(t('service.whatsapp.badMacDetected'));
-                    console.error(t('service.whatsapp.runClearAuth'));
-                }
-                this.onStatusUpdate?.(t('service.whatsapp.sessionErrorBadMac'));
-            } else if (isAuthRejected && allowPairingOnAuthFailure) {
-                this.onStatusUpdate?.('| WhatsApp: Session Preserved (Reconnect Failed)');
+                console.error(t('service.whatsapp.badMacDetected'));
+                console.error(t('service.whatsapp.runClearAuth'));
             }
             this.cleanupSocket();
             this.isReconnecting = false;
             this.reconnectAttempts = 0;
+            this.onStatusUpdate?.(t('service.whatsapp.sessionErrorBadMac'));
             await this.sessionManager.setStatus('disconnected');
-            if (!isBadMac) {
-                this.onStatusUpdate?.(t('service.whatsapp.disconnected'));
+            this.onStatusUpdate?.(t('service.whatsapp.disconnected'));
+            return;
+        }
+
+        if (isAuthRejected) {
+            this.cleanupSocket();
+            this.isReconnecting = false;
+            this.reconnectAttempts = 0;
+
+            if (allowPairingOnAuthFailure) {
+                if (this.verboseMode) {
+                    console.error(t('service.whatsapp.sessionRejected', { statusCode: statusCode ?? 'unknown' }));
+                }
+                this.onStatusUpdate?.(t('service.whatsapp.sessionRejected', { statusCode: statusCode ?? 'unknown' }));
+                await this.sessionManager.deleteAuthState();
+                await this.start({ ...options, allowPairingOnAuthFailure: false });
+                return;
             }
+
+            if (this.verboseMode) {
+                console.error(t('service.whatsapp.sessionInvalidOrLoggedOut', { statusCode: statusCode ?? 'unknown' }));
+            }
+            this.onStatusUpdate?.(t('service.whatsapp.sessionInvalidOrLoggedOut', { statusCode: statusCode ?? 'unknown' }));
+            await this.sessionManager.setStatus('logged-out');
+            this.onStatusUpdate?.(t('service.whatsapp.disconnected'));
             return;
         }
 
