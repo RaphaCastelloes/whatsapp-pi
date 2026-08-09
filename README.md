@@ -59,14 +59,23 @@ See the [Pi documentation](https://pi.dev/docs/latest) for full setup, providers
 
 ### Audio Transcription
 
-Audio transcription uses `whisper-cpp-node` and `ffmpeg`.
+Audio transcription uses a local `whisper.cpp` CLI and FFmpeg; no transcription API key is required.
 
-Install dependencies:
+Install dependencies and build the Whisper CLI:
+
+**Linux/macOS:**
 ```bash
 npm install
+./scripts/build-whisper-cli.sh
 ```
 
-Make sure `ffmpeg` is available in PATH.
+**Windows (PowerShell):**
+```powershell
+npm install
+./scripts/build-whisper-cli.ps1
+```
+
+The CLI is expected at `vendor/whisper.cpp/build/bin/whisper-cli` (or `.exe` on Windows). To use another location, set `WHISPER_CLI_PATH`.
 
 PDF documents are parsed locally and do not require extra system utilities.
 If a PDF cannot be parsed automatically, it is still saved and forwarded with a clear fallback notice.
@@ -97,6 +106,22 @@ After first pairing, you can start Pi with auto-connect enabled:
 pi --whatsapp-pi-online
 ```
 
+### Iniciar automaticamente no Ubuntu
+
+Com `tmux` instalado, o instalador abaixo instala `whatsapp-pi` no agente Pi do usuário e cria um serviço systemd que inicia `pi --whatsapp-pi-online` em um tmux no boot:
+
+```bash
+sudo apt install tmux
+./scripts/install-whatsapp-pi-service.sh
+```
+
+Comandos úteis:
+```bash
+tmux attach -t whatsapp-pi
+systemctl --user status whatsapp-pi.service
+systemctl --user disable --now whatsapp-pi.service
+```
+
 ## Development / Testing
 
 If you are developing or testing the extension locally, you can clone the repository from [GitHub](https://github.com/RaphaCastelloes/whatsapp-pi):
@@ -109,8 +134,15 @@ npm install
 ```
 
 2. Run the extension:
+
+**Linux/macOS:**
 ```bash
 pi -e whatsapp-pi.ts
+```
+
+**Windows (PowerShell):**
+```powershell
+./scripts/launch-pi.ps1
 ```
 
 For verbose mode (shows Baileys trace logs and audio timing logs for debugging):

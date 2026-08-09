@@ -1,6 +1,7 @@
 import { downloadContentFromMessage } from 'baileys';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createStoragePaths } from './storage-path.js';
 import { LiteParse } from '@llamaindex/liteparse';
 import { AudioService } from './audio.service.js';
 import type { IncomingResolution } from './incoming-message.resolver.js';
@@ -17,6 +18,7 @@ const PDF_PREVIEW_LIMIT = 1200;
 
 export class IncomingMediaService {
     private readonly pdfParser = new LiteParse({ ocrEnabled: true });
+    private readonly mediaDir = createStoragePaths().mediaDir;
 
     constructor(
         private readonly audioService: AudioService,
@@ -30,6 +32,10 @@ export class IncomingMediaService {
 
         if (resolved.kind === 'image') {
             return this.processImage(resolved.imageMessage, resolved.text, pushName);
+        }
+
+        if (resolved.kind === 'video') {
+            return this.processVideo(resolved.videoMessage, resolved.text, pushName);
         }
 
         if (resolved.kind === 'document') {
@@ -55,6 +61,7 @@ export class IncomingMediaService {
             if (imageMimeType === 'image/jpg') imageMimeType = 'image/jpeg';
 
             this.logger.log(t('incoming.media.imageDownloaded', { imageMimeType, rawMime, size: imageBuffer.length }));
+            await this.saveMediaFile('image', imageMimeType, imageBuffer);
 
             return {
                 text: fallbackText || t('incoming.media.image'),
@@ -65,6 +72,37 @@ export class IncomingMediaService {
             this.logger.error(t('incoming.media.imageDownloadFailed'), error);
             return { text: t('incoming.media.imageDownloadFailedText') };
         }
+    }
+
+    private async processVideo(videoMessage: any, fallbackText: string, pushName: string): Promise<ProcessedIncomingContent> {
+        this.logger.log(`[WhatsApp-Pi] Downloading video from ${pushName}...`);
+
+        try {
+            const buffer = await this.downloadMessage(videoMessage, 'video');
+            const mimeType = (videoMessage.mimetype || 'video/mp4').toLowerCase().split(';')[0].trim();
+            const extension = mimeType.split('/')[1] || 'mp4';
+            const fileName = `video_${Date.now()}.${extension}`;
+            const absolutePath = join(this.mediaDir, fileName);
+
+            await mkdir(this.mediaDir, { recursive: true });
+            await writeFile(absolutePath, buffer);
+            this.logger.log(`[WhatsApp-Pi] Video saved to ${absolutePath} (${buffer.length} bytes)`);
+
+            return { text: `${fallbackText || t('incoming.media.video')}\n[Video saved: ${absolutePath}]` };
+        } catch (error) {
+            this.logger.error('[WhatsApp-Pi] Failed to download video:', error);
+            return { text: '[Video (download failed)]' };
+        }
+    }
+
+    private async saveMediaFile(kind: 'image' | 'video', mimeType: string, buffer: Buffer): Promise<string> {
+        const extension = mimeType.split('/')[1] || (kind === 'image' ? 'jpg' : 'mp4');
+        const fileName = `${kind}_${Date.now()}.${extension}`;
+        const absolutePath = join(this.mediaDir, fileName);
+
+        await mkdir(this.mediaDir, { recursive: true });
+        await writeFile(absolutePath, buffer);
+        return absolutePath;
     }
 
     private async processDocument(documentMessage: any, pushName: string): Promise<ProcessedIncomingContent> {
@@ -133,7 +171,7 @@ export class IncomingMediaService {
         return normalizedMimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
     }
 
-    private async downloadMessage(message: any, type: 'image' | 'document'): Promise<Buffer> {
+    private async downloadMessage(message: any, type: 'image' | 'video' | 'document'): Promise<Buffer> {
         const stream = await downloadContentFromMessage(message, type);
         let buffer = Buffer.from([]);
 

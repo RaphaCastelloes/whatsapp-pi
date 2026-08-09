@@ -35,6 +35,7 @@
     "@llamaindex/liteparse": "^1.5.3",
     "@sinclair/typebox": "^0.27.10",
     "baileys": "^6.7.21",
+    "ffmpeg-static": "^5.3.0",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0",
     "whisper-cpp-node": "^0.2.12"

@@ -21,6 +21,16 @@ describe('extractIncomingText', () => {
         });
     });
 
+    it('resolves video messages with captions', () => {
+        const videoMessage = { caption: 'watch this', mimetype: 'video/mp4' };
+
+        expect(extractIncomingText({ videoMessage })).toEqual({
+            kind: 'video',
+            text: 'watch this',
+            videoMessage
+        });
+    });
+
     it('resolves image messages with captions', () => {
         const imageMessage = { caption: 'look', mimetype: 'image/jpeg' };
 

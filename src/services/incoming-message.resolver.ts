@@ -5,6 +5,7 @@ export type IncomingResolution =
     | { kind: 'text'; text: string }
     | { kind: 'audio'; text: string; audioMessage: any }
     | { kind: 'image'; text: string; imageMessage: any }
+    | { kind: 'video'; text: string; videoMessage: any }
     | { kind: 'document'; text: string; documentMessage: any }
     | { kind: 'contact'; text: string }
     | { kind: 'location'; text: string }
@@ -106,8 +107,9 @@ export const extractIncomingText = (message: any): IncomingResolution => {
 
     if (resolved?.videoMessage) {
         return {
-            kind: 'text',
-            text: resolved.videoMessage.caption || t('incoming.media.video')
+            kind: 'video',
+            text: resolved.videoMessage.caption || t('incoming.media.video'),
+            videoMessage: resolved.videoMessage
         };
     }
 

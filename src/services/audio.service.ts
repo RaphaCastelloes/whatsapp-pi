@@ -4,11 +4,13 @@ import { promisify } from 'node:util';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import ffmpegStatic from 'ffmpeg-static';
 import { createStoragePaths } from './storage-path.js';
 import { WhatsAppPiLogger } from './whatsapp-pi.logger.js';
 import { tryCreateWhisperCppAudioTranscriber, type AudioTranscriber } from './whisper-cpp-audio.transcriber.js';
 import { t } from '../i18n.js';
 
+const staticFfmpegPath = ffmpegStatic as unknown as string | null;
 const execFileAsync = promisify(execFile);
 
 type AudioLogger = Pick<WhatsAppPiLogger, 'log' | 'error'>;
@@ -18,7 +20,10 @@ export class AudioService {
     private readonly mediaDir = createStoragePaths().mediaDir;
     private readonly logger: AudioLogger;
     private readonly whisperCppTranscriber: AudioTranscriber | null;
-    private readonly ffmpegCommands = process.platform === 'win32' ? ['ffmpeg', 'ffmpeg.exe'] : ['ffmpeg'];
+    private readonly ffmpegCommands = [
+        process.env.FFMPEG_PATH ?? (process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'),
+        ...(staticFfmpegPath ? [staticFfmpegPath] : [])
+    ];
 
     constructor(logger: AudioLogger = new WhatsAppPiLogger(false), whisperCppTranscriber?: AudioTranscriber | null) {
         this.logger = logger;
@@ -126,7 +131,8 @@ export class AudioService {
         const anyError = error as Error & { code?: number | string; stderr?: string };
         const message = `${anyError.message}\n${anyError.stderr ?? ''}`;
 
-        return anyError.code === 127
+        return anyError.code === 'ENOENT'
+            || anyError.code === 127
             || anyError.code === 9009
             || /not found|not recognized/i.test(message);
     }

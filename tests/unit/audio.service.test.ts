@@ -62,7 +62,8 @@ describe('AudioService', () => {
         mocks.homedir.mockReturnValue('/home/test');
         mocks.downloadContentFromMessage.mockResolvedValue(createStream(Buffer.from('media')));
         mocks.existsSync.mockReturnValue(true);
-        mocks.execFile.mockImplementation((_command: string, _args: string[], callback: (error?: Error | null) => void) => {
+        mocks.execFile.mockImplementation((...args: unknown[]) => {
+            const callback = args.at(-1) as (error?: Error | null) => void;
             callback(null);
             return undefined;
         });
@@ -95,7 +96,7 @@ describe('AudioService', () => {
 
         expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(audioMessage, 'audio');
         expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]));
-        expect(mocks.execFile).toHaveBeenCalledWith('ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true });
+        expect(mocks.execFile).toHaveBeenCalledWith('ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true }, expect.any(Function));
         expect(whisperTranscriber.transcribe).toHaveBeenCalledWith(wavPath);
         expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio download: 0 ms');
         expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio write file: 0 ms');

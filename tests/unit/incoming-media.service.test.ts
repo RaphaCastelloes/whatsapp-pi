@@ -84,6 +84,30 @@ describe('IncomingMediaService', () => {
         });
     });
 
+    it('downloads videos to the WhatsApp media directory', async () => {
+        const service = new IncomingMediaService(audioService as any);
+
+        const result = await service.process({
+            kind: 'video',
+            text: '[Video]',
+            videoMessage: { mimetype: 'video/mp4' }
+        }, 'Ana');
+
+        expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(
+            { mimetype: 'video/mp4' },
+            'video'
+        );
+        expect(mocks.mkdir).toHaveBeenCalledWith(
+            expect.stringContaining('whatsapp-medias'),
+            { recursive: true }
+        );
+        expect(mocks.writeFile).toHaveBeenCalledWith(
+            expect.stringMatching(/whatsapp-medias[\\/]video_1234567890\.mp4$/),
+            Buffer.from('media')
+        );
+        expect(result.text).toContain('[Video saved:');
+    });
+
     it('returns a readable fallback when image download fails', async () => {
         const service = new IncomingMediaService(audioService as any);
         mocks.downloadContentFromMessage.mockRejectedValue(new Error('download failed'));
