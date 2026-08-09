@@ -15,7 +15,7 @@ type AudioLogger = Pick<WhatsAppPiLogger, 'log' | 'error'>;
 
 function getCliPath() {
     const name = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
-    return [process.env.WHISPER_CLI_PATH, resolve(process.cwd(), `vendor/whisper.cpp/build/bin/${name}`), resolve(process.cwd(), `vendor/whisper.cpp/build/bin/Release/${name}`), '/home/rapha/whisper.cpp/build/bin/whisper-cli']
+    return [process.env.WHISPER_CLI_PATH, resolve(process.cwd(), `vendor/whisper.cpp/build/bin/${name}`), resolve(process.cwd(), `vendor/whisper.cpp/build/bin/Release/${name}`), '/home/rapha/Repos/whisper.cpp/build/bin/whisper-cli']
         .filter((path): path is string => Boolean(path)).find(existsSync) ?? null;
 }
 function modelPath() { return join(createStoragePaths().root, 'whisper', 'models', MODEL_FILENAME); }
