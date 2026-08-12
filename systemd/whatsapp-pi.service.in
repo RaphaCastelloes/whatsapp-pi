@@ -9,7 +9,8 @@ Environment=PATH=__PI_DIR__/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PI_COMMAND=__PI_BIN__
 Environment=PI_ENTRYPOINT=__PROJECT_DIR__/whatsapp-pi.ts
 Environment=WHATSAPP_PI_TMUX_SESSION=whatsapp-pi
-WorkingDirectory=__PROJECT_DIR__
+Environment=WHATSAPP_PI_WORKING_DIRECTORY=__PI_DIR__
+WorkingDirectory=__PI_DIR__
 ExecStart=__PROJECT_DIR__/scripts/whatsapp-pi-tmux.sh
 ExecStop=__TMUX_BIN__ kill-session -t whatsapp-pi
 Restart=always

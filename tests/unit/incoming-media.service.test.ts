@@ -142,7 +142,7 @@ describe('IncomingMediaService', () => {
             'document'
         );
         expect(mocks.mkdir).toHaveBeenCalledWith(
-            expect.stringContaining('.pi-data\\whatsapp\\documents'),
+            expect.stringMatching(/\.pi-data[/\\]whatsapp[/\\]documents/),
             { recursive: true }
         );
         expect(mocks.writeFile).toHaveBeenCalledWith(

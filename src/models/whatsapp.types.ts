@@ -10,12 +10,19 @@ export interface AllowList {
     numbers: string[];
 }
 
+export interface QuotedMessageInfo {
+    quotedText: string;
+    quotedMessageId?: string;
+    quotedParticipant?: string;
+}
+
 export interface IncomingMessage {
     id: string;
     remoteJid: string;
     pushName?: string;
     text?: string;
     timestamp: number;
+    quotedMessage?: QuotedMessageInfo;
 }
 
 export interface MessageRequest {

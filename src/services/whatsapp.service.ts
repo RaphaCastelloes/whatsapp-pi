@@ -12,6 +12,7 @@ import { installBaileysConsoleFilter } from './baileys-console-filter.js';
 import { t } from '../i18n.js';
 import { appendFileSync } from 'fs';
 import { createStoragePaths } from './storage-path.js';
+import { extractIncomingText } from './incoming-message.resolver.js';
 
 const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
@@ -32,6 +33,9 @@ interface ConnectionUpdateEvent {
     connection?: 'close' | 'open' | string;
     lastDisconnect?: DisconnectPayload;
     qr?: string;
+    receivedPendingNotifications?: boolean;
+    isOnline?: boolean;
+    isNewLogin: boolean | undefined;
 }
 
 interface IncomingMessageKey {
@@ -43,6 +47,10 @@ interface IncomingMessageKey {
 
 interface IncomingMessageContextInfo {
     mentionedJid?: string[];
+    quotedMessage?: IncomingMessageContent;
+    participant?: string;
+    stanzaId?: string;
+    remoteJid?: string;
 }
 
 interface IncomingMessageWithContext {
@@ -399,16 +407,23 @@ export class WhatsAppService {
 
         if (qr) {
             await this.handlePairingQr(qr);
-        }
-
-        if (connection === 'close') {
-            await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
-            return;
+            return
         }
 
         if (connection === 'open') {
             await this.handleConnectionOpen();
+            return
         }
+
+        if (connection === 'connecting' ||
+            update.receivedPendingNotifications ||
+            update.isOnline ||
+            update.isNewLogin) {
+            return
+        }
+
+        await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
+        return;
     }
 
     private async handlePairingQr(qr: string) {
@@ -569,12 +584,17 @@ export class WhatsAppService {
     }
 
     private async recordIncomingMessage(message: IncomingMessageLike, remoteJid: string, text: string) {
+        // Extract quote information from the message
+        const resolved = extractIncomingText(message.message);
+        const quotedMessage = 'quotedMessage' in resolved ? resolved.quotedMessage : undefined;
+
         void Promise.resolve(this.onIncomingMessageRecorded?.({
             id: message.key.id ?? remoteJid,
             remoteJid,
             pushName: message.pushName || undefined,
             text,
-            timestamp: this.getIncomingTimestamp(message.messageTimestamp)
+            timestamp: this.getIncomingTimestamp(message.messageTimestamp),
+            quotedMessage
         })).catch(error => {
             if (this.verboseMode) {
                 console.error(t('service.whatsapp.failedRecordRecentMessage'), error);

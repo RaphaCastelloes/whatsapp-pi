@@ -250,16 +250,23 @@ export default function (pi: ExtensionAPI) {
             ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
             : `Message from ${pushName} (${sender}):`;
 
-        logger.log(`[WhatsApp-Pi] ${messageHeader} ${text}`);
+        // Include quote information if present
+        let fullText = text;
+        if ('quotedMessage' in resolved && resolved.quotedMessage) {
+            const quotePrefix = t('incoming.quoted.replyingTo', { quotedText: resolved.quotedMessage.quotedText });
+            fullText = `${quotePrefix}\n\n${text}`;
+        }
+
+        logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
 
         // Use a standard delivery for ALL messages to ensure TUI consistency
         if (imageBuffer && imageMimeType) {
             pi.sendUserMessage([
-                { type: "text", text: `${messageHeader} ${text}` },
+                { type: "text", text: `${messageHeader} ${fullText}` },
                 { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
             ], { deliverAs: "followUp" });
         } else {
-            pi.sendUserMessage(`${messageHeader} ${text}`, { deliverAs: "followUp" });
+            pi.sendUserMessage(`${messageHeader} ${fullText}`, { deliverAs: "followUp" });
         }
 
         // Handle commands

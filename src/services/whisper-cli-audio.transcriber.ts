@@ -42,8 +42,10 @@ async function ensureModel(logger: AudioLogger) {
 export function tryCreateWhisperCliAudioTranscriber(logger: AudioLogger): AudioTranscriber | null {
     const cli = getCliPath();
     if (!cli) { logger.error('[WhatsApp-Pi] Whisper.cpp CLI unavailable. Set WHISPER_CLI_PATH or run the build script.'); return null; }
+    const libPath = dirname(cli);
+    const env = { ...process.env, LD_LIBRARY_PATH: libPath + (process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : '') };
     return { async transcribe(inputPath) {
-        const { stdout } = await execFileAsync(cli, ['--model', await ensureModel(logger), '--file', inputPath, '--language', 'pt', '--no-timestamps', '--no-prints'], { windowsHide: true });
+        const { stdout } = await execFileAsync(cli, ['--model', await ensureModel(logger), '--file', inputPath, '--language', 'pt', '--no-timestamps', '--no-prints'], { windowsHide: true, env });
         return stdout.trim();
     } };
 }

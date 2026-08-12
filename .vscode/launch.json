@@ -105,6 +105,27 @@
                 "LANG": "pt_BR.UTF-8",
                 "LC_ALL": "pt_BR.UTF-8"
             }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug with Pi (Online) on Linux",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "runtimeExecutable": "pi",
+            "runtimeArgs": [
+                "-e",
+                "${workspaceFolder}/whatsapp-pi.ts",
+                "--whatsapp-pi-online",
+                "-c"
+            ],
+            "console": "externalTerminal",
+            "outputCapture": "std",
+            "env": {
+                "LANG": "pt_BR.UTF-8",
+                "LC_ALL": "pt_BR.UTF-8"
+            }
         }
     ]
 }
