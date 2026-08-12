@@ -295,9 +295,13 @@ export class WhatsAppService {
         
         fileLog(`[scheduleReconnect] Scheduling reconnect attempt #${this.reconnectAttempts} in ${delay}ms`);
         
+        
+        fileLog(`[scheduleReconnect] Scheduling reconnect attempt #${this.reconnectAttempts} in ${delay}ms`);
+        
         this.onStatusUpdate?.(t('service.whatsapp.reconnecting'));
         this.clearReconnectTimeout();
         this.reconnectTimeout = setTimeout(async () => {
+            fileLog(`[scheduleReconnect] Executing reconnect attempt #${this.reconnectAttempts}`);
             fileLog(`[scheduleReconnect] Executing reconnect attempt #${this.reconnectAttempts}`);
             this.isReconnecting = false;
             
@@ -386,6 +390,7 @@ export class WhatsAppService {
 
     async start(options: WhatsAppStartOptions = {}) {
         fileLog(`[start] Starting WhatsApp service, isReconnecting=${this.isReconnecting}`);
+        fileLog(`[start] Starting WhatsApp service, isReconnecting=${this.isReconnecting}`);
         this.intentionalStop = false;
         if (this.isReconnecting) {
             fileLog('[start] Skipping - reconnect already in progress');
@@ -438,6 +443,10 @@ export class WhatsAppService {
             fileLog(`[connection.update] connection=${connection}, hasDisconnect=${!!lastDisconnect}, qr=${!!qr}, isReconnecting=${this.isReconnecting}`);
         }
 
+        if (this.verboseMode) {
+            fileLog(`[connection.update] connection=${connection}, hasDisconnect=${!!lastDisconnect}, qr=${!!qr}, isReconnecting=${this.isReconnecting}`);
+        }
+
         if (qr) {
             await this.handlePairingQr(qr);
             return
@@ -456,8 +465,14 @@ export class WhatsAppService {
         }
 
         if (connection === 'close') {
+        if (connection === 'close') {
             await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
             return;
+        }
+
+        if (this.verboseMode && connection !== undefined) {
+            fileLog(`[connection.update] Ignoring unexpected connection state: ${connection}`);
+        }
         }
 
         if (this.verboseMode && connection !== undefined) {
@@ -473,6 +488,8 @@ export class WhatsAppService {
     }
 
     private async handleConnectionOpen() {
+        fileLog('[handleConnectionOpen] Connection established successfully');
+        
         fileLog('[handleConnectionOpen] Connection established successfully');
         
         if (this.verboseMode) {
@@ -535,7 +552,12 @@ export class WhatsAppService {
 
         fileLog(`[handleConnectionClosed] statusCode=${statusCode}, errorMessage="${errorMessage}", shouldReconnect=${shouldReconnect}, isBadMac=${isBadMac}, isAuthRejected=${isAuthRejected}, intentionalStop=${this.intentionalStop}, isReconnecting=${this.isReconnecting}`);
 
+        fileLog(`[handleConnectionClosed] statusCode=${statusCode}, errorMessage="${errorMessage}", shouldReconnect=${shouldReconnect}, isBadMac=${isBadMac}, isAuthRejected=${isAuthRejected}, intentionalStop=${this.intentionalStop}, isReconnecting=${this.isReconnecting}`);
+
         if (this.intentionalStop) {
+            if (this.verboseMode) {
+                fileLog('[handleConnectionClosed] Skipping - intentional stop');
+            }
             if (this.verboseMode) {
                 fileLog('[handleConnectionClosed] Skipping - intentional stop');
             }
@@ -843,12 +865,14 @@ export class WhatsAppService {
 
     async logout() {
         fileLog('[logout] Logging out - setting intentional stop');
+        fileLog('[logout] Logging out - setting intentional stop');
         this.intentionalStop = true;
         await this.socket?.logout();
         await this.sessionManager.deleteAuthState();
     }
 
     async stop() {
+        fileLog('[stop] Stopping WhatsApp service - setting intentional stop');
         fileLog('[stop] Stopping WhatsApp service - setting intentional stop');
         this.intentionalStop = true;
         try {
@@ -857,6 +881,7 @@ export class WhatsAppService {
             if (this.verboseMode) {
                 console.error(t('service.whatsapp.failedPersistAuthState'), error);
             }
+            fileLog(`[stop] Failed to save credentials: ${error instanceof Error ? error.message : String(error)}`);
             fileLog(`[stop] Failed to save credentials: ${error instanceof Error ? error.message : String(error)}`);
         }
 
