@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
         setIncomingMessageRecorder: vi.fn(),
         setMessageCallback: vi.fn(),
         setGroupBinding: vi.fn(),
+        setRecentsService: vi.fn(),
         getBoundGroupJid: vi.fn().mockReturnValue(null),
         getStatus: vi.fn().mockReturnValue('connected'),
         isVerbose: vi.fn().mockReturnValue(false),

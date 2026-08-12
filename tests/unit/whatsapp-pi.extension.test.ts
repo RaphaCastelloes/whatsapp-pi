@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
         setIncomingMessageRecorder: vi.fn(),
         setMessageCallback: vi.fn(),
         setGroupBinding: vi.fn(),
+        setRecentsService: vi.fn(),
         getBoundGroupJid: vi.fn().mockReturnValue(null),
         getStatus: vi.fn().mockReturnValue('connected'),
         isVerbose: vi.fn().mockReturnValue(false),
@@ -340,7 +341,7 @@ describe('whatsapp-pi extension', () => {
             }]
         });
 
-        expect(mocks.extractIncomingText).toHaveBeenCalledWith({ conversation: 'hello' });
+        expect(mocks.extractIncomingText).toHaveBeenCalledWith({ conversation: 'hello' }, mocks.recentsService);
         expect(mocks.incomingMediaService.process).toHaveBeenCalledWith(
             { kind: 'text', text: 'hello from whatsapp' },
             'Ana'

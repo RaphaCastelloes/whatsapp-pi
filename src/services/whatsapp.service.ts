@@ -13,6 +13,7 @@ import { t } from '../i18n.js';
 import { appendFileSync } from 'fs';
 import { createStoragePaths } from './storage-path.js';
 import { extractIncomingText } from './incoming-message.resolver.js';
+import type { RecentsService } from './recents.service.js';
 
 const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
@@ -117,6 +118,7 @@ export class WhatsAppService {
 
     private socket?: WhatsAppSocketLike;
     private sessionManager: SessionManager;
+    private recentsService?: RecentsService;
     private messageSender: MessageSender;
     private isReconnecting = false;
     private reconnectAttempts = 0;
@@ -137,6 +139,10 @@ export class WhatsAppService {
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
         this.messageSender = new MessageSender(this);
+    }
+
+    public setRecentsService(recentsService: RecentsService) {
+        this.recentsService = recentsService;
     }
 
     public setGroupBinding(groupJid: string) {
@@ -273,18 +279,37 @@ export class WhatsAppService {
     }
 
     private scheduleReconnect(options: WhatsAppStartOptions) {
-        if (this.intentionalStop) return;
+        if (this.intentionalStop) {
+            fileLog('[scheduleReconnect] Skipping - intentional stop');
+            return;
+        }
+
+        if (this.isReconnecting) {
+            fileLog('[scheduleReconnect] Already reconnecting, skipping duplicate schedule');
+            return;
+        }
+
         this.isReconnecting = true;
         this.reconnectAttempts++;
         const delay = this.getReconnectDelayMs();
+        
+        fileLog(`[scheduleReconnect] Scheduling reconnect attempt #${this.reconnectAttempts} in ${delay}ms`);
+        
         this.onStatusUpdate?.(t('service.whatsapp.reconnecting'));
         this.clearReconnectTimeout();
         this.reconnectTimeout = setTimeout(async () => {
+            fileLog(`[scheduleReconnect] Executing reconnect attempt #${this.reconnectAttempts}`);
             this.isReconnecting = false;
-            if (this.intentionalStop) return;
+            
+            if (this.intentionalStop) {
+                fileLog('[scheduleReconnect] Aborting - intentional stop detected');
+                return;
+            }
+            
             try {
                 await this.start(options);
-            } catch {
+            } catch (error) {
+                fileLog(`[scheduleReconnect] Reconnect failed: ${error instanceof Error ? error.message : String(error)}`);
                 if (!this.intentionalStop) {
                     this.scheduleReconnect(options);
                 }
@@ -360,8 +385,12 @@ export class WhatsAppService {
     }
 
     async start(options: WhatsAppStartOptions = {}) {
+        fileLog(`[start] Starting WhatsApp service, isReconnecting=${this.isReconnecting}`);
         this.intentionalStop = false;
-        if (this.isReconnecting) return;
+        if (this.isReconnecting) {
+            fileLog('[start] Skipping - reconnect already in progress');
+            return;
+        }
         this.onStatusUpdate?.(t('service.whatsapp.connecting'));
 
         this.cleanupSocket();
@@ -405,6 +434,10 @@ export class WhatsAppService {
         const { connection, lastDisconnect, qr } = update;
         const allowPairingOnAuthFailure = options.allowPairingOnAuthFailure ?? true;
 
+        if (this.verboseMode) {
+            fileLog(`[connection.update] connection=${connection}, hasDisconnect=${!!lastDisconnect}, qr=${!!qr}, isReconnecting=${this.isReconnecting}`);
+        }
+
         if (qr) {
             await this.handlePairingQr(qr);
             return
@@ -422,8 +455,14 @@ export class WhatsAppService {
             return
         }
 
-        await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
-        return;
+        if (connection === 'close') {
+            await this.handleConnectionClosed(lastDisconnect, allowPairingOnAuthFailure, options);
+            return;
+        }
+
+        if (this.verboseMode && connection !== undefined) {
+            fileLog(`[connection.update] Ignoring unexpected connection state: ${connection}`);
+        }
     }
 
     private async handlePairingQr(qr: string) {
@@ -434,6 +473,8 @@ export class WhatsAppService {
     }
 
     private async handleConnectionOpen() {
+        fileLog('[handleConnectionOpen] Connection established successfully');
+        
         if (this.verboseMode) {
             console.log(t('service.whatsapp.connectionOpened'));
         }
@@ -478,8 +519,7 @@ export class WhatsAppService {
         return errorMessage.includes('bad-request')
             || statusCode === 400
             || statusCode === 401
-            || statusCode === DisconnectReason.loggedOut
-            || statusCode === DisconnectReason.badSession;
+            || statusCode === DisconnectReason.loggedOut;
     }
 
     private async handleConnectionClosed(
@@ -493,7 +533,12 @@ export class WhatsAppService {
         const isBadMac = this.isBadMacError(errorMessage);
         const isAuthRejected = this.isAuthRejected(statusCode, errorMessage);
 
+        fileLog(`[handleConnectionClosed] statusCode=${statusCode}, errorMessage="${errorMessage}", shouldReconnect=${shouldReconnect}, isBadMac=${isBadMac}, isAuthRejected=${isAuthRejected}, intentionalStop=${this.intentionalStop}, isReconnecting=${this.isReconnecting}`);
+
         if (this.intentionalStop) {
+            if (this.verboseMode) {
+                fileLog('[handleConnectionClosed] Skipping - intentional stop');
+            }
             return;
         }
 
@@ -551,11 +596,17 @@ export class WhatsAppService {
             return;
         }
 
-        if (shouldReconnect && !this.isReconnecting) {
-            await this.saveCreds?.();
-            this.cleanupSocket();
-            this.scheduleReconnect(options);
-        } else if (!shouldReconnect) {
+        if (shouldReconnect) {
+            if (this.isReconnecting) {
+                fileLog('[handleConnectionClosed] Reconnect already in progress, skipping duplicate');
+            } else {
+                fileLog('[handleConnectionClosed] Initiating reconnect sequence');
+                await this.saveCreds?.();
+                this.cleanupSocket();
+                this.scheduleReconnect(options);
+            }
+        } else {
+            fileLog('[handleConnectionClosed] Not reconnecting - logged out or permanent disconnect');
             this.reconnectAttempts = 0;
             await this.sessionManager.setStatus('logged-out');
             this.onStatusUpdate?.(t('service.whatsapp.disconnected'));
@@ -584,9 +635,14 @@ export class WhatsAppService {
     }
 
     private async recordIncomingMessage(message: IncomingMessageLike, remoteJid: string, text: string) {
-        // Extract quote information from the message
-        const resolved = extractIncomingText(message.message);
+        // Extract quote information and original message (for reactions) from the message
+        const resolved = extractIncomingText(message.message, this.recentsService);
         const quotedMessage = 'quotedMessage' in resolved ? resolved.quotedMessage : undefined;
+
+        // Don't record reactions in the recents store - they are events about existing messages
+        if (resolved.kind === 'reaction') {
+            return;
+        }
 
         void Promise.resolve(this.onIncomingMessageRecorded?.({
             id: message.key.id ?? remoteJid,
@@ -628,7 +684,12 @@ export class WhatsAppService {
         const senderJid = isGroup
             ? remoteJid
             : this.normalizeContactNumber(remoteJid.split('@')[0]);
-        void this.recordIncomingMessage(message, remoteJid, text);
+        
+        // Process the message with full context (including reaction lookup)
+        const resolved = extractIncomingText(message.message, this.recentsService);
+        const displayText = resolved.text;
+        
+        void this.recordIncomingMessage(message, remoteJid, displayText);
 
         const pushName = message.pushName || undefined;
 
@@ -781,12 +842,14 @@ export class WhatsAppService {
     }
 
     async logout() {
+        fileLog('[logout] Logging out - setting intentional stop');
         this.intentionalStop = true;
         await this.socket?.logout();
         await this.sessionManager.deleteAuthState();
     }
 
     async stop() {
+        fileLog('[stop] Stopping WhatsApp service - setting intentional stop');
         this.intentionalStop = true;
         try {
             await this.saveCreds?.();
@@ -794,6 +857,7 @@ export class WhatsAppService {
             if (this.verboseMode) {
                 console.error(t('service.whatsapp.failedPersistAuthState'), error);
             }
+            fileLog(`[stop] Failed to save credentials: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         this.cleanupSocket();

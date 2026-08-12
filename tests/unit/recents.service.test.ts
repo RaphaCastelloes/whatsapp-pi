@@ -191,4 +191,105 @@ describe('RecentsService', () => {
             })
         ]);
     });
+
+    describe('findMessageById', () => {
+        it('finds a message by its ID across all conversations', async () => {
+            const service = new RecentsService(sessionManager as any);
+            await service.ensureInitialized();
+
+            await service.recordMessage({
+                messageId: 'MSG1',
+                senderNumber: '+5511999998888',
+                text: 'First message',
+                direction: 'incoming',
+                timestamp: 1000
+            });
+
+            await service.recordMessage({
+                messageId: 'MSG2',
+                senderNumber: '+5511999998888',
+                text: 'Second message',
+                direction: 'outgoing',
+                timestamp: 2000
+            });
+
+            await service.recordMessage({
+                messageId: 'MSG3',
+                senderNumber: '+5511000000001',
+                text: 'Different conversation',
+                direction: 'incoming',
+                timestamp: 3000
+            });
+
+            const found = service.findMessageById('MSG2');
+            expect(found).toEqual({
+                messageId: 'MSG2',
+                senderNumber: '+5511999998888',
+                text: 'Second message',
+                direction: 'outgoing',
+                timestamp: 2000000
+            });
+        });
+
+        it('returns undefined when message ID is not found', async () => {
+            const service = new RecentsService(sessionManager as any);
+            await service.ensureInitialized();
+
+            await service.recordMessage({
+                messageId: 'MSG1',
+                senderNumber: '+5511999998888',
+                text: 'Only message',
+                direction: 'incoming',
+                timestamp: 1000
+            });
+
+            const found = service.findMessageById('NONEXISTENT');
+            expect(found).toBeUndefined();
+        });
+
+        it('returns undefined when no messages exist', async () => {
+            const service = new RecentsService(sessionManager as any);
+            await service.ensureInitialized();
+
+            const found = service.findMessageById('MSG1');
+            expect(found).toBeUndefined();
+        });
+
+        it('finds messages across multiple conversations', async () => {
+            const service = new RecentsService(sessionManager as any);
+            await service.ensureInitialized();
+
+            await service.recordMessage({
+                messageId: 'MSG1',
+                senderNumber: '+5511999998888',
+                text: 'Conversation A',
+                direction: 'incoming',
+                timestamp: 1000
+            });
+
+            await service.recordMessage({
+                messageId: 'MSG2',
+                senderNumber: '+5511000000001',
+                text: 'Conversation B',
+                direction: 'incoming',
+                timestamp: 2000
+            });
+
+            await service.recordMessage({
+                messageId: 'MSG3',
+                senderNumber: '+5511000000002',
+                text: 'Conversation C',
+                direction: 'incoming',
+                timestamp: 3000
+            });
+
+            const foundA = service.findMessageById('MSG1');
+            const foundB = service.findMessageById('MSG2');
+            const foundC = service.findMessageById('MSG3');
+
+            expect(foundA?.text).toBe('Conversation A');
+            expect(foundB?.text).toBe('Conversation B');
+            expect(foundC?.text).toBe('Conversation C');
+        });
+    });
 });
