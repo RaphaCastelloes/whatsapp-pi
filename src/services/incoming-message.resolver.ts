@@ -479,20 +479,13 @@ export const extractIncomingText = (message: any, recentsService?: RecentsServic
         // Try to look up the original message from recents
         let originalMessage: OriginalMessageInfo | undefined;
         if (recentsService && reactionKey?.id) {
-            console.log('[DEBUG] Looking for message ID:', reactionKey.id);
             const foundMessage = recentsService.findMessageById(reactionKey.id);
-            console.log('[DEBUG] Found message:', foundMessage ? `"${foundMessage.text}"` : 'NOT FOUND');
             if (foundMessage) {
                 originalMessage = {
                     originalText: foundMessage.text,
                     originalMessageId: foundMessage.messageId
                 };
             }
-        } else {
-            console.log('[DEBUG] RecentsService or reactionKey.id not available:', { 
-                hasRecentsService: !!recentsService, 
-                reactionKeyId: reactionKey?.id 
-            });
         }
         
         if (emoji) {

@@ -184,13 +184,6 @@ export class RecentsService {
             direction: input.direction,
             timestamp: normalizedTimestamp
         };
-        
-        console.log('[RecentsService] Recording message:', {
-            messageId: input.messageId,
-            senderNumber,
-            text: normalizedText,
-            direction: input.direction
-        });
 
         const filtered = existing.filter(message => message.messageId !== nextMessage.messageId);
         filtered.push(nextMessage);

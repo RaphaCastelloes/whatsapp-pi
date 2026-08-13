@@ -324,17 +324,6 @@ export default function (pi: ExtensionAPI) {
             }
 
             const message = params.message ?? '';
-            const formattedMessage = message
-                .split('\n')
-                .map((line: string) => `    ${line}`)
-                .join('\n');
-
-            logger.log([
-                t("log.outgoing.title"),
-                t("log.outgoing.to", { jid: resolvedJid }),
-                t("log.outgoing.message"),
-                formattedMessage
-            ].join('\n'));
 
             const outboundJid = whatsappService.resolveOutboundRecipientJid(resolvedJid);
             const result = await whatsappService.sendMessage(outboundJid, message);
@@ -349,19 +338,6 @@ export default function (pi: ExtensionAPI) {
                     direction: 'outgoing',
                     timestamp: Date.now()
                 });
-                logger.log([
-                    t("log.result.title"),
-                    t("log.outgoing.to", { jid: resolvedJid }),
-                    t("log.result.status.sent"),
-                    t("log.result.messageId", { messageId: result.messageId ?? t("log.unknownMessageId") })
-                ].join('\n'));
-            } else {
-                logger.log([
-                    t("log.result.title"),
-                    t("log.outgoing.to", { jid: resolvedJid }),
-                    t("log.result.status.failed"),
-                    t("log.result.error", { error: result.error ?? t("log.unknownError") })
-                ].join('\n'));
             }
 
             return {
