@@ -25,3 +25,4 @@ Thumbs.db
 .pi-data/
 package-lock.json
 .playwright-mcp
+.pi/loops/
