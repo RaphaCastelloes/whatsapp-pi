@@ -39,6 +39,7 @@ export class MenuHandler {
         const disconnectWhatsAppLabel = t('menu.root.disconnectWhatsApp');
         const connectWhatsAppLabel = t('menu.root.connectWhatsApp');
         const logoffDeleteSessionLabel = t('menu.root.logoffDeleteSession');
+        const settingsLabel = t('menu.root.settings');
         const backLabel = t('menu.root.back');
         const options: string[] = [];
 
@@ -55,6 +56,7 @@ export class MenuHandler {
             options.push(logoffDeleteSessionLabel);
         }
 
+        options.push(settingsLabel);
         options.push(backLabel);
 
         const choice = await ctx.ui.select(title, options);
@@ -95,6 +97,9 @@ export class MenuHandler {
                 break;
             case recentsLabel:
                 await this.manageRecents(ctx);
+                break;
+            case settingsLabel:
+                await this.manageSettings(ctx);
                 break;
         }
     }
@@ -369,6 +374,28 @@ export class MenuHandler {
             output
         ].join('\n'));
         ctx.ui.notify(this.printedAllowedGroups.join('\n'), 'info');
+    }
+
+    private async manageSettings(ctx: ExtensionCommandContext) {
+        const brandVisibility = this.sessionManager.getBrandVisibility();
+        const title = t('menu.settings.title');
+        const brandVisibilityLabel = brandVisibility
+            ? t('menu.settings.brandVisibilityYes')
+            : t('menu.settings.brandVisibilityNo');
+        const backLabel = t('menu.settings.back');
+        const options = [brandVisibilityLabel, backLabel];
+
+        const choice = await ctx.ui.select(title, options);
+
+        if (choice === brandVisibilityLabel) {
+            const newValue = !brandVisibility;
+            await this.sessionManager.setBrandVisibility(newValue);
+            ctx.ui.notify(t('menu.settings.brandVisibilitySet', { value: newValue ? 'Yes' : 'No' }), 'info');
+            await this.manageSettings(ctx);
+            return;
+        }
+
+        await this.handleCommand(ctx);
     }
 
     private async manageRecents(ctx: ExtensionCommandContext) {

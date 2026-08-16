@@ -117,6 +117,7 @@ describe('MenuHandler', () => {
 
         expect(ctx.ui.select).toHaveBeenCalledWith('WhatsApp (Status: disconnected)', [
             'Connect WhatsApp',
+            'Settings',
             'Back'
         ]);
     });

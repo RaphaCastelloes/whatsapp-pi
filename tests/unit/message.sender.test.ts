@@ -7,6 +7,7 @@ describe('MessageSender', () => {
         getStatus: vi.fn(),
         getSocket: vi.fn(),
         isVerbose: vi.fn(),
+        getBrandVisibility: vi.fn().mockReturnValue(true),
         prepareGroupSession: vi.fn().mockResolvedValue(undefined)
     };
 

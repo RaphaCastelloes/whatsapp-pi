@@ -73,9 +73,8 @@ export class MessageSender {
 
                 // 4. Send the message
                 // Note: Branding π is applied here to ensure consistency
-                const response = await socket.sendMessage(request.recipientJid, { 
-                    text: `${request.text} π` 
-                });
+                const text = this.whatsappService.getBrandVisibility() ? `${request.text} π` : request.text;
+                const response = await socket.sendMessage(request.recipientJid, { text });
 
                 fileLog(`SUCCESS sending to ${request.recipientJid} on attempt ${attempts}`);
                 return {
