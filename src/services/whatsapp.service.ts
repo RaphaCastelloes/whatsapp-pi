@@ -209,6 +209,18 @@ export class WhatsAppService {
             return recipient;
         }
 
+        // Self-chats are addressed via the account's own LID (e.g. 1304...@lid).
+        // Reply to the LID JID, never the <lid>@s.whatsapp.net form, which is
+        // not routable to the visible chat.
+        const recipientLocal = recipient.split('@')[0].split(':')[0];
+        const ownLid = this.socket?.user?.lid;
+        if (ownLid) {
+            const ownLidLocal = ownLid.split('@')[0].split(':')[0];
+            if (recipientLocal === ownLidLocal) {
+                return `${ownLidLocal}@lid`;
+            }
+        }
+
         const senderNumber = this.normalizeContactNumber(recipient.split('@')[0]);
         const allowedContact = this.sessionManager.getAllowedContact(recipient)
             ?? this.sessionManager.getAllowedContact(senderNumber);
