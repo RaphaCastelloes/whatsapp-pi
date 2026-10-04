@@ -403,6 +403,22 @@ describe('whatsapp-pi extension', () => {
         expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('send_wa_message prefers the active remoteJid over a reconstructed contact JID', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        mocks.whatsappService.getLastRemoteJid.mockReturnValue('5511999998888@lid');
+
+        registerExtension(pi as any);
+        const result = await pi.tools.get('send_wa_message').execute(
+            'tool-call-id',
+            { jid: '5511999998888@s.whatsapp.net', message: 'hello' }
+        );
+
+        expect(result.isError).toBe(false);
+        expect(mocks.whatsappService.resolveOutboundRecipientJid).toHaveBeenCalledWith('5511999998888@lid');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith('5511999998888@lid', 'hello');
+    });
+
     it('sets group binding on session_start when whatsapp-group flag is set', async () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
