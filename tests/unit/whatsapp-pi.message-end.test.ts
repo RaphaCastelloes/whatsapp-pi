@@ -28,6 +28,11 @@ const mocks = vi.hoisted(() => {
         stop: vi.fn().mockResolvedValue(undefined),
         sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 }),
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
+        canonicalConversation: vi.fn((jid: string) => jid),
+        getAccountScope: vi.fn().mockReturnValue('fixture-account'),
+        getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
+        isSessionContextCurrent: vi.fn().mockReturnValue(true),
+        markIncomingProcessing: vi.fn(),
         getLastRemoteJid: vi.fn().mockReturnValue('5511999998888@s.whatsapp.net'),
         markRead: vi.fn(),
         sendPresence: vi.fn().mockResolvedValue(undefined)
@@ -158,7 +163,44 @@ const makeAssistantEvent = (text: string) => ({
     }
 });
 
-describe('whatsapp-pi message_end handler', () => {
+const incoming = (id = 'incoming', jid = '5511999998888@s.whatsapp.net') => ({
+    key: { id, remoteJid: jid, fromMe: false },
+    pushName: 'Ana',
+    senderNumber: '+' + jid.split('@')[0],
+    sessionContext: { accountScope: 'fixture-account', generation: 1 },
+    message: { conversation: 'hello' }
+});
+
+const submit = async (pi: MockPi, ctx: ReturnType<typeof createMockContext>, id = 'incoming', jid?: string) => {
+    const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+    await callback(incoming(id, jid));
+    const content = pi.sendUserMessage.mock.calls.at(-1)![0] as string;
+    await pi.handlers.get('input')!({ source: 'extension', text: content }, ctx);
+    await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: content }] } }, ctx);
+};
+
+const setup = async () => {
+    const registerExtension = await loadExtension();
+    const pi = createMockPi();
+    const ctx = createMockContext();
+    registerExtension(pi as any);
+    await pi.handlers.get('session_start')!({}, ctx);
+    return { pi, ctx };
+};
+
+const beginOwned = async (pi: MockPi, ctx: ReturnType<typeof createMockContext>) => {
+    await pi.handlers.get('agent_start')!({}, ctx);
+    await submit(pi, ctx);
+    await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+};
+
+const finalTurn = async (pi: MockPi, ctx: ReturnType<typeof createMockContext>, text: string) => {
+    const event = makeAssistantEvent(text);
+    await pi.handlers.get('message_end')!(event, ctx);
+    await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
+};
+
+describe('whatsapp-pi owned turn delivery', () => {
     beforeEach(() => {
         resetI18n();
         vi.stubEnv('WHATSAPP_PI_LOCALE', '');
@@ -169,122 +211,148 @@ describe('whatsapp-pi message_end handler', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
     });
 
-    it('sends reply and records in recents on successful assistant message', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
-
-        registerExtension(pi as any);
-        await pi.handlers.get('session_start')!({}, ctx);
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Hello back!'), ctx);
-
-        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
-            '5511999998888@s.whatsapp.net',
-            'Hello back!'
-        );
-        expect(mocks.recentsService.recordMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                messageId: 'MSG123',
-                senderNumber: '+5511999998888',
-                text: 'Hello back!',
-                direction: 'outgoing'
-            })
-        );
+    it('buffers message_end and sends only at the completed owned turn', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const event = makeAssistantEvent('Hello back!');
+        await pi.handlers.get('message_end')!(event, ctx);
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+        await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'Hello back!', true);
+        expect(mocks.recentsService.recordMessage).toHaveBeenCalledWith(expect.objectContaining({
+            messageId: 'MSG123', senderNumber: '+5511999998888', text: 'Hello back!', direction: 'outgoing'
+        }));
         expect(ctx.ui.notify).toHaveBeenCalledWith('Sent reply to WhatsApp contact', 'info');
     });
 
-    it('skips when session is not connected', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
+    it('never mirrors terminal-only turns to an old WhatsApp destination', async () => {
+        const { pi, ctx } = await setup();
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: 'terminal' }] } }, ctx);
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Local answer');
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('skips delivery while disconnected', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
         mocks.sessionManager.getStatus.mockReturnValue('disconnected');
-
-        registerExtension(pi as any);
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Hello'), ctx);
-
+        await finalTurn(pi, ctx, 'Hello');
         expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
     });
 
-    it('skips when message role is not assistant', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
-
-        registerExtension(pi as any);
-        await pi.handlers.get('message_end')!({
-            message: { role: 'user', content: [{ type: 'text', text: 'hi' }] }
-        }, ctx);
-
-        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
-    });
-
-    it('notifies error when sendMessage returns failure', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
-        mocks.whatsappService.sendMessage.mockResolvedValue({ success: false, error: 'timeout', attempts: 3 });
-
-        registerExtension(pi as any);
-        await pi.handlers.get('session_start')!({}, ctx);
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Hello'), ctx);
-
+    it('records failure instead of success if an owned send fails or throws', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        mocks.whatsappService.sendMessage.mockResolvedValueOnce({ success: false, error: 'timeout', attempts: 1 });
+        await finalTurn(pi, ctx, 'Failed');
         expect(mocks.recentsService.recordMessage).not.toHaveBeenCalled();
         expect(ctx.ui.notify).toHaveBeenCalledWith('Failed to send WhatsApp reply', 'error');
+        mocks.whatsappService.sendMessage.mockRejectedValueOnce(new Error('network'));
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Throws');
+        expect(mocks.recentsService.recordMessage).not.toHaveBeenCalled();
     });
 
-    it('notifies error when sendMessage throws', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
-        mocks.whatsappService.sendMessage.mockRejectedValue(new Error('network error'));
-
-        registerExtension(pi as any);
-        await pi.handlers.get('session_start')!({}, ctx);
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Hello'), ctx);
-
-        expect(ctx.ui.notify).toHaveBeenCalledWith('Failed to send WhatsApp reply', 'error');
-    });
-
-    it('skips reply when send_wa_message tool already sent to the same JID', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
-
-        registerExtension(pi as any);
-        await pi.handlers.get('session_start')!({}, ctx);
-
-        await pi.tools.get('send_wa_message').execute(
-            'tool-call-id',
-            { jid: '5511999998888@s.whatsapp.net', message: 'Tool message' }
-        );
-        vi.clearAllMocks();
-
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Agent text'), ctx);
-
+    it('does not mirror text-plus-tool commentary before or after the tool sends', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const event = { message: { role: 'assistant', stopReason: 'toolUse', content: [
+            { type: 'text', text: 'Sending now' }, { type: 'toolCall', id: 'call', name: 'send_wa_message', arguments: {} }
+        ] } };
+        await pi.handlers.get('message_end')!(event, ctx);
         expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
-        expect(ctx.ui.notify).not.toHaveBeenCalled();
+        await pi.tools.get('send_wa_message').execute('call', { message: 'Tool message' });
+        await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Redundant confirmation');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledOnce();
     });
 
-    it('sends again after the dedup flag is cleared by a prior message_end', async () => {
-        const registerExtension = await loadExtension();
-        const pi = createMockPi();
-        const ctx = createMockContext();
+    it('a tool send to another chat does not suppress the rightful owned final reply', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        await pi.tools.get('send_wa_message').execute('call', { jid: '15550000003@s.whatsapp.net', message: 'Other chat' });
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Answer to A');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenNthCalledWith(2, '5511999998888@s.whatsapp.net', 'Answer to A', true);
+    });
 
-        registerExtension(pi as any);
-        await pi.handlers.get('session_start')!({}, ctx);
+    it('B arriving during A cannot redirect a default tool or reset A suppression', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        await callback(incoming('B', '15550000002@s.whatsapp.net'));
+        mocks.whatsappService.getLastRemoteJid.mockReturnValue('15550000002@s.whatsapp.net');
+        await pi.tools.get('send_wa_message').execute('call', { message: 'Still A' });
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'Still A', true);
+        await finalTurn(pi, ctx, 'Duplicate');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledOnce();
+    });
 
-        await pi.tools.get('send_wa_message').execute(
-            'tool-call-id',
-            { jid: '5511999998888@s.whatsapp.net', message: 'Tool message' }
-        );
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Skipped'), ctx);
-        vi.clearAllMocks();
+    it('combined A/B consumption fails closed for automatic and default tool sends', async () => {
+        const { pi, ctx } = await setup();
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await submit(pi, ctx, 'A');
+        await submit(pi, ctx, 'B', '15550000002@s.whatsapp.net');
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Combined');
+        const result = await pi.tools.get('send_wa_message').execute('call', { message: 'No guess' });
+        expect(result.isError).toBe(true);
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+    });
 
-        await pi.handlers.get('message_end')!(makeAssistantEvent('Follow up'), ctx);
+    it('does not inject slow media preparation after a session reset', async () => {
+        const { pi, ctx } = await setup();
+        let finish!: (value: { text: string }) => void;
+        mocks.incomingMediaService.process.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        const processing = callback(incoming('slow'));
+        await pi.handlers.get('session_before_switch')!({}, ctx);
+        finish({ text: 'Late media' });
+        await processing;
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    });
 
-        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
-            '5511999998888@s.whatsapp.net',
-            'Follow up'
-        );
+    it.each(['Late media', '/abort', '/compact'])('does not inject or execute %s after its account changes during preparation', async text => {
+        const { pi, ctx } = await setup();
+        let finish!: (value: { text: string }) => void;
+        mocks.incomingMediaService.process.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        mocks.whatsappService.isSessionContextCurrent.mockImplementation(context => context?.accountScope === mocks.whatsappService.getAccountScope());
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        const processing = callback(incoming('old-account'));
+        mocks.whatsappService.getAccountScope.mockReturnValue('new-account');
+        finish({ text });
+        await processing;
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
+        expect(ctx.abort).not.toHaveBeenCalled();
+        expect(ctx.compact).not.toHaveBeenCalled();
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not revive an owned turn after returning to the same account in a newer generation', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        mocks.whatsappService.getSessionContext.mockReturnValue({ accountScope: 'fixture-account', generation: 3 });
+        await finalTurn(pi, ctx, 'Old generation');
+        const result = await pi.tools.get('send_wa_message').execute('stale-call', { jid: '15550000003@s.whatsapp.net', message: 'Stale explicit send' });
+        expect(result.isError).toBe(true);
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('reset clears ownership and a new request gets independent suppression', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        await pi.tools.get('send_wa_message').execute('first', { message: 'First' });
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('done').message] }, ctx);
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await submit(pi, ctx, 'new-request');
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'New reply');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledTimes(2);
+        await pi.handlers.get('session_before_switch')!({}, ctx);
+        await finalTurn(pi, ctx, 'Stale');
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledTimes(2);
     });
 });

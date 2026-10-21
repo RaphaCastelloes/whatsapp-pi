@@ -10,6 +10,8 @@ import { IncomingMediaService } from './src/services/incoming-media.service.js';
 import { WhatsAppPiLogger } from './src/services/whatsapp-pi.logger.js';
 import { ReactionSender } from './src/services/reaction.sender.js';
 import { initI18n, t } from './src/i18n.js';
+import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './src/services/conversation-router.service.js';
+import type { MessageResult } from './src/models/whatsapp.types.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -49,6 +51,36 @@ export default function (pi: ExtensionAPI) {
     const incomingMediaService = new IncomingMediaService(audioService, logger);
     const menuHandler = new MenuHandler(whatsappService, sessionManager, recentsService);
     let _ctx: ExtensionContext | undefined;
+    const canonicalConversation = (jid: string) => whatsappService.canonicalConversation(jid);
+    const routingScope = () => {
+        const context = whatsappService.getSessionContext();
+        return JSON.stringify([context.accountScope, context.generation]);
+    };
+    const router = new ConversationRouter(
+        canonicalConversation,
+        routingScope,
+        key => whatsappService.markIncomingProcessing(key, 'consumed')
+    );
+
+    pi.on('input', event => { router.observeInput(event); });
+    pi.on('session_before_switch', () => { router.reset(); });
+
+    const sendWithOwnership = async (jid: string, text: string, snapshot: RoutingSnapshot | undefined): Promise<MessageResult> => {
+        if (snapshot && snapshot.epoch.scope !== routingScope()) {
+            return { success: false, error: t('message.sender.sessionChanged'), attempts: 0 };
+        }
+        const token = router.beginSend(snapshot, jid);
+        try {
+            const result = snapshot?.target === jid
+                ? await whatsappService.sendMessage(jid, text, true)
+                : await whatsappService.sendMessage(jid, text);
+            router.finishSend(token, result);
+            return result;
+        } catch (error) {
+            router.finishSend(token, { success: false, delivery: 'unknown' });
+            throw error;
+        }
+    };
 
     const formatFooterStatus = (status: string) => {
         if (status !== t("service.whatsapp.connected")) {
@@ -92,6 +124,7 @@ export default function (pi: ExtensionAPI) {
 
     // Initial status setup
     pi.on("session_start", async (_event, ctx) => {
+        router.reset();
         _ctx = ctx;
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
@@ -128,9 +161,9 @@ export default function (pi: ExtensionAPI) {
         };
         whatsappService.setIncomingMessageRecorder(async (message) => {
             const isGroup = message.remoteJid.endsWith('@g.us');
-            const senderNumber = isGroup
+            const senderNumber = message.senderNumber ?? (isGroup || message.remoteJid.endsWith('@lid')
                 ? message.remoteJid
-                : `+${message.remoteJid.split('@')[0]}`;
+                : `+${message.remoteJid.split('@')[0].split(':')[0]}`);
             await recentsService.recordMessage({
                 messageId: message.id,
                 senderNumber,
@@ -207,38 +240,28 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
     });
 
-    // Track whether send_wa_message tool already sent a reply this turn
-    let toolSentToJid: string | null = null;
-
     const toRecentSenderNumber = (recipientJid: string): string => {
-        if (recipientJid.endsWith('@g.us')) {
-            return recipientJid;
-        }
-
-        return `+${recipientJid.split('@')[0]}`;
-    };
-
-    const normalizeJidLocalPart = (jid: string): string => {
-        return jid.split('@')[0].split(':')[0].replace(/^\+/, '');
+        const canonical = canonicalConversation(recipientJid) ?? recipientJid;
+        return /^\d+@s\.whatsapp\.net$/.test(canonical) ? `+${canonical.split('@')[0]}` : canonical;
     };
 
     const resolveToolRecipientJid = (params: { jid?: string; recipient_jid?: string }): string | null => {
         const providedJid = params.jid || params.recipient_jid;
-        const lastRemoteJid = whatsappService.getLastRemoteJid();
+        const lastRemoteJid = router.isActive() ? router.defaultTarget() : whatsappService.getLastRemoteJid();
 
         if (!providedJid) {
+            if (router.isActive()) return lastRemoteJid || null;
             return lastRemoteJid || whatsappService.getOperatorJid() || null;
         }
 
-        // When replying to the active WhatsApp conversation, never trust a JID
-        // reconstructed from the displayed phone number (e.g. number@s.whatsapp.net).
-        // Some chats arrive as @lid or other Baileys identifiers; using the exact
-        // remoteJid from the incoming event is the only reliable target.
+        // A verified PN/LID alias may identify the current chat, but sending still
+        // uses that request's original transport JID. Never infer aliases from digits.
+        const canonicalProvided = canonicalConversation(providedJid);
         if (
             lastRemoteJid
             && !SessionManager.isGroupJid(providedJid)
             && !SessionManager.isGroupJid(lastRemoteJid)
-            && normalizeJidLocalPart(providedJid) === normalizeJidLocalPart(lastRemoteJid)
+            && canonicalProvided && canonicalProvided === canonicalConversation(lastRemoteJid)
             && providedJid !== lastRemoteJid
         ) {
             logger.log(`[WhatsApp-Pi] send_wa_message: using active remoteJid ${lastRemoteJid} instead of reconstructed JID ${providedJid}`);
@@ -249,9 +272,9 @@ export default function (pi: ExtensionAPI) {
     };
 
     // Handle incoming messages by injecting them as user prompts
-    whatsappService.setMessageCallback(async (m) => {
-        const msg = m.messages?.[0];
-        if (!msg?.message) return;
+    whatsappService.setMessageCallback(async (msg) => {
+        if (!msg.message || !whatsappService.isSessionContextCurrent(msg.sessionContext)) return;
+        const runtimeId = router.getRuntimeId();
 
         const remoteJid = msg.key.remoteJid;
         const isGroup = remoteJid?.endsWith('@g.us') || false;
@@ -259,14 +282,9 @@ export default function (pi: ExtensionAPI) {
         const sender = remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
-        // Mark as read and start typing indicator immediately
         if (remoteJid && msg.key.id) {
-            whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
-            whatsappService.sendPresence(remoteJid, 'composing');
+            void whatsappService.markRead(msg.key);
         }
-
-        // Reset tool-sent flag for this new incoming message
-        toolSentToJid = null;
 
         const resolved = extractIncomingText(msg.message, recentsService);
         if (resolved.kind === 'system') {
@@ -275,6 +293,10 @@ export default function (pi: ExtensionAPI) {
         }
 
         const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
+        if (runtimeId !== router.getRuntimeId() || !whatsappService.isSessionContextCurrent(msg.sessionContext)) {
+            if (whatsappService.isSessionContextCurrent(msg.sessionContext)) whatsappService.markIncomingProcessing(msg.key, 'failed');
+            return;
+        }
 
         // Format message header with group context when applicable
         const messageHeader = isGroup
@@ -290,23 +312,16 @@ export default function (pi: ExtensionAPI) {
 
         logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
 
-        // Use a standard delivery for ALL messages to ensure TUI consistency
-        if (imageBuffer && imageMimeType) {
-            pi.sendUserMessage([
-                { type: "text", text: `${messageHeader} ${fullText}` },
-                { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
-            ], { deliverAs: "followUp" });
-        } else {
-            pi.sendUserMessage(`${messageHeader} ${fullText}`, { deliverAs: "followUp" });
-        }
+        whatsappService.markIncomingProcessing?.(msg.key, 'prepared');
 
-        // Handle commands
+        // Commands must not also become ordinary agent prompts.
         if (text.trim().toLowerCase().startsWith('/compact')) {
             logger.log(`[WhatsApp-Pi] Session compact requested by ${pushName}.`);
 
             if (_ctx) {
+                router.reset();
                 _ctx.compact();
-                await whatsappService.sendMessage(remoteJid!, "Session compacted successfully! ✅");
+                await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
             }
             return;
         }
@@ -314,20 +329,28 @@ export default function (pi: ExtensionAPI) {
         if (text.trim().toLowerCase().startsWith('/abort')) {
             logger.log(`[WhatsApp-Pi] Abort requested by ${pushName}.`);
             if (_ctx) {
+                router.reset();
                 _ctx.abort();
-                await whatsappService.sendMessage(remoteJid!, "Aborted! ✅");
+                await whatsappService.sendMessage(remoteJid, "Aborted! ✅", true);
             }
             return;
         }
 
-        
+        const content: RoutedContent = imageBuffer && imageMimeType ? [
+            { type: 'text', text: `${messageHeader} ${fullText}` },
+            { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
+        ] : `${messageHeader} ${fullText}`;
+        const submitted = router.prepare(content, msg.key);
+        // Preserve Pi input policies; ownership requires observed, exact consumed content.
+        pi.sendUserMessage(submitted.content as Parameters<ExtensionAPI['sendUserMessage']>[0], { deliverAs: 'followUp' });
+        whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
     });
 
     // Register send_wa_message tool (LLM-callable)
     pi.registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
-        description: "Send a WhatsApp message to a contact or group. The 'jid' parameter is the WhatsApp JID (e.g. 5511999998888@s.whatsapp.net for contacts, or 120363012345@g.us for groups). If omitted, replies to the last conversation.",
+        description: "Send text to a known WhatsApp contact/group JID. If jid is omitted, uses the unique conversation owning the current turn. Ambiguous or terminal-only turns require an explicit JID; idle manual calls retain last-conversation/operator fallback.",
         promptSnippet: "send_wa_message({message, jid?}) - Send a WhatsApp message. When replying to the current/last WhatsApp conversation, omit jid; do not reconstruct a JID from the displayed sender number. Only pass jid for an explicit different contact/group using a known real WhatsApp JID (e.g. 120363012345@g.us). IMPORTANT: After calling this tool, do NOT generate any follow-up text or confirmation — the message is already delivered to WhatsApp. Your entire response to the user should be sent ONLY through this tool, not repeated in chat.",
         parameters: Type.Object({
             jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
@@ -342,7 +365,7 @@ export default function (pi: ExtensionAPI) {
                 return {
                     isError: true,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No JID provided and no active conversation to reply to", attempts: 0 }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: t('routing.destinationRequired'), attempts: 0 }) }]
                 };
             }
 
@@ -356,12 +379,12 @@ export default function (pi: ExtensionAPI) {
 
             const message = params.message ?? '';
 
-            const outboundJid = whatsappService.resolveOutboundRecipientJid(resolvedJid);
-            const result = await whatsappService.sendMessage(outboundJid, message);
+            const snapshot = router.snapshot();
+            const outboundJid = snapshot?.target === resolvedJid
+                ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid);
+            const result = await sendWithOwnership(outboundJid, message, snapshot);
 
             if (result.success) {
-                // Mark that tool already sent to this JID — prevents message_end from re-sending
-                toolSentToJid = outboundJid;
                 await recentsService.recordMessage({
                     messageId: result.messageId!,
                     senderNumber: toRecentSenderNumber(outboundJid),
@@ -374,7 +397,7 @@ export default function (pi: ExtensionAPI) {
             return {
                 isError: !result.success,
                 details: undefined,
-                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts }) }]
+                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts, delivery: result.delivery }) }]
             };
         }
     });
@@ -388,7 +411,9 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             jid: Type.String({ description: "WhatsApp JID of the chat (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us)" }),
             messageId: Type.String({ description: "ID of the message to react to" }),
-            emoji: Type.String({ description: "Emoji to react with (e.g., 👍, ❤️, 😂). Use empty string to remove reaction." })
+            emoji: Type.String({ description: "Emoji to react with (e.g., 👍, ❤️, 😂). Use empty string to remove reaction." }),
+            fromMe: Type.Optional(Type.Boolean({ description: "Direction of the original message, when needed to disambiguate its key." })),
+            participant: Type.Optional(Type.String({ description: "Original group participant JID, when needed to disambiguate its key." }))
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
             // Get socket from WhatsApp service
@@ -402,17 +427,21 @@ export default function (pi: ExtensionAPI) {
             }
 
             // Create sender with the socket
-            const sender = new ReactionSender(socket as any);
+            const sender = new ReactionSender(socket, options => whatsappService.findMessageKey(options.jid, options.messageId, {
+                fromMe: options.fromMe, participant: options.participant
+            }));
             const result = await sender.sendReaction({
                 jid: params.jid ?? '',
                 messageId: params.messageId ?? '',
-                emoji: params.emoji ?? ''
+                emoji: params.emoji ?? '',
+                fromMe: params.fromMe,
+                participant: params.participant
             });
 
             return {
                 isError: !result.success,
                 details: undefined,
-                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error }) }]
+                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, delivery: result.delivery }) }]
             };
         }
     });
@@ -523,9 +552,6 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    // Suppress automatic message_end reply when tool already sent
-    // This is checked by the message_end handler below
-
     // Register commands
     pi.registerCommand("whatsapp", {
         description: t("command.whatsapp.description"),
@@ -543,56 +569,42 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    // Handle outgoing messages (Agent -> WhatsApp)
-    pi.on("agent_start", async (_event, _ctx) => {
-        if (sessionManager.getStatus() !== 'connected') return;
-        const lastJid = whatsappService.getLastRemoteJid();
-        if (lastJid) {
-            await whatsappService.sendPresence(whatsappService.resolveOutboundRecipientJid(lastJid), 'composing');
+    pi.on('agent_start', () => { router.startRun(); });
+    pi.on('message_start', async (event) => {
+        if (event.message.role === 'user' || event.message.role === 'custom') router.consume(event.message);
+        if (event.message.role === 'assistant') {
+            router.freeze();
+            const target = router.defaultTarget();
+            if (target && sessionManager.getStatus() === 'connected') await whatsappService.sendPresence(target, 'composing');
         }
     });
-
-    pi.on("message_end", async (event, ctx) => {
+    pi.on('message_end', event => { router.buffer(event.message); });
+    pi.on('turn_end', async (_event, ctx) => {
         if (sessionManager.getStatus() !== 'connected') return;
-
-        const { message } = event;
-        // Only reply if it's the assistant and we have a valid target
-        if (message.role === "assistant") {
-            const lastJid = whatsappService.getLastRemoteJid();
-            const text = message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
-            const outboundJid = lastJid
-                ? whatsappService.resolveOutboundRecipientJid(lastJid)
-                : null;
-
-            // Skip if send_wa_message tool already sent a reply to this JID
-            if (toolSentToJid === outboundJid) {
-                toolSentToJid = null;
-                return;
-            }
-
-            if (outboundJid && text) {
-                try {
-                    const result = await whatsappService.sendMessage(outboundJid, text);
-                    if (result.success) {
-                        await recentsService.recordMessage({
-                            messageId: result.messageId ?? `${Date.now()}`,
-                            senderNumber: toRecentSenderNumber(outboundJid),
-                            text,
-                            direction: 'outgoing',
-                            timestamp: Date.now()
-                        });
-                        ctx.ui.notify(t("notify.replySent"), 'info');
-                    } else {
-                        ctx.ui.notify(t("notify.replyFailed"), 'error');
-                    }
-                } catch {
-                    ctx.ui.notify(t("notify.replyFailed"), 'error');
-                }
-            }
+        const mirror = router.mirror();
+        if (!mirror?.snapshot.target) return;
+        const target = mirror.snapshot.target;
+        try {
+            const result = await sendWithOwnership(target, mirror.text, mirror.snapshot);
+            if (result.success) {
+                await recentsService.recordMessage({
+                    messageId: result.messageId ?? `${Date.now()}`,
+                    senderNumber: toRecentSenderNumber(target), text: mirror.text,
+                    direction: 'outgoing', timestamp: Date.now()
+                });
+                ctx.ui.notify(t('notify.replySent'), 'info');
+            } else ctx.ui.notify(t('notify.replyFailed'), 'error');
+        } catch {
+            ctx.ui.notify(t('notify.replyFailed'), 'error');
         }
+    });
+    pi.on('agent_end', event => {
+        const last = [...event.messages].reverse().find(message => message.role === 'assistant');
+        router.endRun(last?.role === 'assistant' && last.stopReason === 'error');
     });
 
     pi.on("session_shutdown", async () => {
+        router.reset();
         logger.log("[WhatsApp-Pi] Session shutdown detected. Stopping WhatsApp service...");
         await whatsappService.stop();
     });

@@ -29,6 +29,11 @@ const mocks = vi.hoisted(() => {
         stop: vi.fn().mockResolvedValue(undefined),
         sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 }),
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
+        canonicalConversation: vi.fn((jid: string) => jid),
+        getAccountScope: vi.fn().mockReturnValue('fixture-account'),
+        getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
+        isSessionContextCurrent: vi.fn().mockReturnValue(true),
+        markIncomingProcessing: vi.fn(),
         getLastRemoteJid: vi.fn().mockReturnValue('5511999998888@s.whatsapp.net'),
         markRead: vi.fn(),
         sendPresence: vi.fn().mockResolvedValue(undefined)
@@ -330,15 +335,13 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA1',
-                    remoteJid: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: 'hello' }
-            }]
+            key: {
+                id: 'WA1',
+                remoteJid: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: 'hello' }
         });
 
         expect(mocks.extractIncomingText).toHaveBeenCalledWith({ conversation: 'hello' }, mocks.recentsService);
@@ -346,12 +349,20 @@ describe('whatsapp-pi extension', () => {
             { kind: 'text', text: 'hello from whatsapp' },
             'Ana'
         );
-        expect(mocks.whatsappService.markRead).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'WA1', false);
-        expect(mocks.whatsappService.sendPresence).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'composing');
+        expect(mocks.whatsappService.markRead).toHaveBeenCalledWith({ remoteJid: '5511999998888@s.whatsapp.net', id: 'WA1', fromMe: false });
+        expect(mocks.whatsappService.sendPresence).not.toHaveBeenCalled();
         expect(pi.sendUserMessage).toHaveBeenCalledWith(
-            'Message from Ana (5511999998888): hello from whatsapp',
+            expect.stringContaining('Message from Ana (5511999998888): hello from whatsapp'),
             { deliverAs: 'followUp' }
         );
+        const submitted = pi.sendUserMessage.mock.calls[0][0] as string;
+        expect(submitted).toMatch(/^\[WhatsApp request [\da-f-]+\]/);
+        const ctx = createMockContext();
+        await pi.handlers.get('input')!({ source: 'extension', text: submitted }, ctx);
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: submitted }] } }, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'assistant', content: [] } }, ctx);
+        expect(mocks.whatsappService.sendPresence).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'composing');
     });
 
     it('executes /compact commands received from WhatsApp', async () => {
@@ -365,21 +376,21 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA1',
-                    remoteJid: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: '/compact' }
-            }]
+            key: {
+                id: 'WA1',
+                remoteJid: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: '/compact' }
         });
 
         expect(ctx.compact).toHaveBeenCalledOnce();
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
         expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
             '5511999998888@s.whatsapp.net',
-            'Session compacted successfully! ✅'
+            'Session compaction requested. ✅',
+            true
         );
     });
 
@@ -407,6 +418,7 @@ describe('whatsapp-pi extension', () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
         mocks.whatsappService.getLastRemoteJid.mockReturnValue('5511999998888@lid');
+        mocks.whatsappService.canonicalConversation.mockImplementation(jid => jid.replace(/@lid$/, '@s.whatsapp.net'));
 
         registerExtension(pi as any);
         const result = await pi.tools.get('send_wa_message').execute(
@@ -455,20 +467,18 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA-GRP-1',
-                    remoteJid: '120363012345@g.us',
-                    participant: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: 'hello group' }
-            }]
+            key: {
+                id: 'WA-GRP-1',
+                remoteJid: '120363012345@g.us',
+                participant: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: 'hello group' }
         });
 
         expect(pi.sendUserMessage).toHaveBeenCalledWith(
-            'Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp',
+            expect.stringContaining('Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp'),
             { deliverAs: 'followUp' }
         );
     });

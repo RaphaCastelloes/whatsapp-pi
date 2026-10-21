@@ -20,6 +20,9 @@ Thumbs.db
 *.tmp
 *.swp
 
+# Local pull request draft
+/PR1.md
+
 # Pi Extension Data
 .pi/extensions/whatsapp/auth/
 .pi-data/

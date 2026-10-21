@@ -21,7 +21,7 @@ Pi is a powerful agentic AI coding assistant that operates in your terminal. Thi
   - Add group JIDs with optional aliases
   - Only groups in Allowed Groups are processed by the agent
 - **Recents & History**: Browse recent conversations, inspect full message history, and reply from message detail view
-- **Reliable Messaging**: Queue-based message sending with retry logic
+- **Reliable Messaging**: Connection-aware sending with stable message IDs, bounded pre-transmission retries, and explicit uncertain outcomes
 - **TUI Integration**: Menu-driven interface for managing connections, contacts, and recent chats
 - **Group-Only Mode**: Bind the agent to a single WhatsApp group with `--whatsapp-group`
 - **Media Support**: 
@@ -162,14 +162,32 @@ pi -e whatsapp-pi.ts --whatsapp-pi-online
 - **Send Message** and `send_wa_message` are outbound only.
 - If you message yourself, WhatsApp may show sent/read ticks, but that does not guarantee Pi will treat it as a trigger.
 
+### Trusted Chats and Reply Routing
+
+All allowed chats share the **same Pi model context**. Allow only mutually trusted people/groups; correct reply routing is not conversation privacy isolation.
+
+Incoming prompts include an opaque request marker. It identifies an exact extension-submitted input in a bounded, memory-only registry; it is not a routing command. Pi's normal user-input policies still run. Ownership activates only when matching content is consumed, not when a chat message arrives.
+
+Automatic replies wait until tool results are available. They never reuse a stale WhatsApp destination for terminal-only work. Combined inputs from different chats, unknown input, or policy/runtime-transformed content (including changed image bytes) fail closed: an agent must use an explicit known recipient rather than guess. Verified PN/LID aliases do not replace the original transport address of a reply.
+
+An admitted batch and its pending preparation retain an account/auth scope and session generation. Account changes, logout or explicit stop discard stale unsubmitted work rather than submitting it through a new account. Same-account reconnects preserve admitted batch work; mapping results and callbacks from obsolete sockets are ignored. These guards do not recall a send that has already started.
+
+Every eligible batch item is considered. History/append events and request-ID-bearing resends do not trigger ordinary agent work. A delayed normal `notify` event without a request ID can still trigger work. Replay protection is bounded to 5,000 entries/24 hours in the running process; eviction/restart ends that protection. There is no durable agent-job replay, and a crash during handoff can lose a request. Retry manually by sending a fresh WhatsApp message, not by automatically resending an uncertain outbound send.
+
+Ordinary incoming text ending in `π` is accepted. The legacy branding filter applies only to own-direction messages; registered outgoing IDs provide additional echo protection.
+
+Full message keys and permitted raw content are cached in memory for at most 500 messages/24 hours, or earlier protocol expiry. Reactions require an unambiguous retained target; optional `fromMe`/`participant` hints disambiguate stored keys. Missing targets return an error rather than inventing a group participant or message direction. View-once payloads are excluded from this new cache; these limits do not erase existing Pi transcripts, logs, or downloaded media.
+
+A successful socket send means **accepted**, not delivered/read by the recipient. An undefined result or transport failure after transmission starts returns `delivery: "unknown"` with the stable message ID when available. Do not resend automatically; the first send may still arrive.
+
 ## LLM-Callable Tools
 
 The extension registers the following tools that the Pi agent can call:
 
 | Tool | Direction | Description |
 | --- | --- | --- |
-| `send_wa_message` | outbound | Send a WhatsApp message to a contact or group (or reply to the last conversation if `jid` is omitted). |
-| `send_reaction` | outbound | React to a WhatsApp message with an emoji. |
+| `send_wa_message` | outbound | Send text to a known recipient, or omit `jid` for the uniquely owned current conversation. Idle manual calls retain last-conversation/operator fallback. |
+| `send_reaction` | outbound | React to a retained, unambiguous message key; optional `fromMe`/`participant` hints and compound emoji are supported. |
 | `list_wa_conversations` | read-only | List recent conversations from the local recents store. Supports `onlyIncoming`, `onlyAllowed`, and `limit`. |
 | `get_wa_conversation_history` | read-only | Get the most recent messages with a given `senderNumber` (accepts `+E164`, raw digits, or a JID). Supports `limit`. |
 | `check_wa_new_messages` | read-only | List conversations whose most recent message is incoming (i.e. waiting for a reply). Supports `sinceTimestamp` (ms epoch). |

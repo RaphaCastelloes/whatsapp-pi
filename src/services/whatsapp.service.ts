@@ -1,12 +1,19 @@
 import {
     makeWASocket,
+    generateMessageIDV2,
     DisconnectReason,
     makeCacheableSignalKeyStore,
-    proto
+    proto,
+    toNumber,
+    type WAMessage,
+    type WAMessageKey,
+    type MessageUpsertType,
+    type AnyMessageContent,
+    type MiscMessageGenerationOptions
 } from 'baileys';
 import P from 'pino';
 import { SessionManager } from './session.manager.js';
-import { IncomingMessage, SessionStatus } from '../models/whatsapp.types.js';
+import { IncomingMessage, SessionStatus, type IncomingMessageEnvelope, type IncomingProcessingState, type WhatsAppSessionContext } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
 import { installBaileysConsoleFilter } from './baileys-console-filter.js';
 import { t } from '../i18n.js';
@@ -14,6 +21,8 @@ import { appendFileSync } from 'fs';
 import { createStoragePaths } from './storage-path.js';
 import { extractIncomingText } from './incoming-message.resolver.js';
 import type { RecentsService } from './recents.service.js';
+import { JidResolver } from './jid-resolver.service.js';
+import { MessageStore } from './message-store.service.js';
 
 const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
@@ -39,49 +48,13 @@ interface ConnectionUpdateEvent {
     isNewLogin: boolean | undefined;
 }
 
-interface IncomingMessageKey {
-    id?: string;
-    remoteJid?: string;
-    fromMe?: boolean;
-    participant?: string;
-}
-
-interface IncomingMessageContextInfo {
-    mentionedJid?: string[];
-    quotedMessage?: IncomingMessageContent;
-    participant?: string;
-    stanzaId?: string;
-    remoteJid?: string;
-}
-
-interface IncomingMessageWithContext {
-    contextInfo?: IncomingMessageContextInfo;
-}
-
-interface IncomingMessageContent {
-    conversation?: string;
-    extendedTextMessage?: {
-        text?: string;
-        contextInfo?: IncomingMessageContextInfo;
-    };
-    imageMessage?: IncomingMessageWithContext;
-    videoMessage?: IncomingMessageWithContext;
-    documentMessage?: IncomingMessageWithContext;
-    audioMessage?: IncomingMessageWithContext;
-    stickerMessage?: IncomingMessageWithContext;
-    buttonsMessage?: IncomingMessageWithContext;
-    templateMessage?: IncomingMessageWithContext;
-}
-
-interface IncomingMessageLike {
-    key: IncomingMessageKey;
-    message?: IncomingMessageContent;
-    pushName?: string;
-    messageTimestamp?: number | string;
-}
+type IncomingMessageContent = proto.IMessage;
+type IncomingMessageLike = Pick<WAMessage, 'key' | 'message' | 'pushName' | 'messageTimestamp'>;
 
 interface MessagesUpsertEvent {
     messages?: IncomingMessageLike[];
+    type?: MessageUpsertType;
+    requestId?: string;
 }
 
 interface GroupParticipantsUpdateEvent {
@@ -89,13 +62,9 @@ interface GroupParticipantsUpdateEvent {
 }
 
 interface SentMessageLike {
-    key?: { id?: string };
+    participant?: string | null;
+    key?: WAMessageKey;
     message?: proto.IMessage | null;
-}
-
-interface CachedSentMessage {
-    message: proto.IMessage;
-    expiresAt: number;
 }
 
 interface WhatsAppSocketLike {
@@ -105,13 +74,16 @@ interface WhatsAppSocketLike {
         on(event: 'creds.update', handler: () => void | Promise<void>): void;
         on(event: 'messages.upsert', handler: (payload: MessagesUpsertEvent) => void | Promise<void>): void;
         on(event: 'group-participants.update', handler: (payload: GroupParticipantsUpdateEvent) => void | Promise<void>): void;
-        removeAllListeners(event: 'connection.update' | 'creds.update' | 'messages.upsert' | 'group-participants.update'): void;
+        on(event: 'lid-mapping.update', handler: (payload: { lid: string; pn: string }) => void): void;
+        on(event: 'groups.update', handler: (payload: Array<{ id?: string }>) => void): void;
+        removeAllListeners(event: 'connection.update' | 'creds.update' | 'messages.upsert' | 'group-participants.update' | 'lid-mapping.update' | 'groups.update'): void;
     };
+    signalRepository?: { lidMapping: { getPNForLID(lid: string): Promise<string | null> } };
     end(reason?: unknown): void;
     logout(): Promise<void>;
-    sendMessage(jid: string, content: { text: string }): Promise<SentMessageLike | undefined>;
+    sendMessage(jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions): Promise<SentMessageLike | undefined>;
     sendPresenceUpdate(presence: 'composing' | 'recording' | 'paused', jid: string): Promise<void>;
-    readMessages(messages: Array<{ remoteJid: string; id: string; fromMe: boolean }>): Promise<void>;
+    readMessages(messages: WAMessageKey[]): Promise<void>;
     groupMetadata(jid: string): Promise<{ id: string; subject: string; participants: Array<{ id: string }> }>;
     groupFetchAllParticipating(): Promise<Record<string, { id: string; subject: string; participants: Array<{ id: string }> }>>;
 }
@@ -130,8 +102,6 @@ interface BoomLikeError {
 export class WhatsAppService {
     private static readonly INITIAL_RECONNECT_DELAY_MS = 5_000;
     private static readonly MAX_RECONNECT_DELAY_MS = 120_000;
-    private static readonly SENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
-    private static readonly MAX_CACHED_SENT_MESSAGES = 500;
 
     private socket?: WhatsAppSocketLike;
     private sessionManager: SessionManager;
@@ -147,13 +117,21 @@ export class WhatsAppService {
     private reconnectTimeout?: ReturnType<typeof setTimeout>;
     private intentionalStop = false;
     private onQRCode?: (qr: string) => void;
-    private onMessage?: (m: MessagesUpsertEvent) => void;
+    private onMessage?: (message: IncomingMessageEnvelope) => void | Promise<void>;
+    private incomingLedger = new Map<string, { key: WAMessageKey; scope: string; state: IncomingProcessingState; expiresAt: number }>();
+    private readonly jidResolver = new JidResolver(() => {
+        this.reindexIncomingLedger();
+        this.messageStore?.reindex();
+    });
+    private readonly messageStore = new MessageStore(this.jidResolver, () => this.getAccountScope());
+    private identityAccount = '';
+    private identityAuthDir = '';
+    private sessionGeneration = 0;
     private onStatusUpdate?: (status: string) => void;
     private lastRemoteJid: string | null = null;
     private qrWasShown = false;
     private boundGroupJid: string | null = null;
     private groupMetadataCache: Map<string, { id: string; subject: string; participants: Array<{ id: string }> }> = new Map();
-    private sentMessageCache = new Map<string, CachedSentMessage>();
 
     constructor(sessionManager: SessionManager) {
         this.sessionManager = sessionManager;
@@ -193,37 +171,25 @@ export class WhatsAppService {
         return this.socket;
     }
 
-    public cacheSentMessage(id: string | undefined, message: proto.IMessage | null | undefined) {
-        if (!id || !message) return;
-
-        const now = Date.now();
-        this.pruneSentMessageCache(now);
-        this.sentMessageCache.delete(id);
-        this.sentMessageCache.set(id, {
-            message,
-            expiresAt: now + WhatsAppService.SENT_MESSAGE_TTL_MS
-        });
-
-        while (this.sentMessageCache.size > WhatsAppService.MAX_CACHED_SENT_MESSAGES) {
-            const oldestId = this.sentMessageCache.keys().next().value;
-            if (!oldestId) break;
-            this.sentMessageCache.delete(oldestId);
-        }
+    public registerOutgoing(jid: string, id: string): void {
+        this.updateIdentityAccount();
+        this.messageStore.own({ remoteJid: jid, id, fromMe: true });
     }
 
-    private getCachedSentMessage(id: string | null | undefined): proto.IMessage | undefined {
-        if (!id) return undefined;
-
-        const now = Date.now();
-        this.pruneSentMessageCache(now);
-        return this.sentMessageCache.get(id)?.message;
+    public cacheSentMessage(id: string | null | undefined, message: proto.IMessage | null | undefined, key: WAMessageKey): void {
+        if (!id || !message || !key.remoteJid) return;
+        this.updateIdentityAccount();
+        const completeKey = { ...key, id, fromMe: true };
+        this.messageStore.own(completeKey);
+        this.messageStore.put({ key: completeKey, message });
     }
 
-    private pruneSentMessageCache(now: number) {
-        for (const [id, cached] of this.sentMessageCache) {
-            if (cached.expiresAt > now) continue;
-            this.sentMessageCache.delete(id);
-        }
+    public findMessageKey(jid: string, id: string, hint: WAMessageKey = {}): WAMessageKey | undefined {
+        return this.messageStore.find(jid, id, hint)?.key;
+    }
+
+    public canonicalConversation(jid: string): string | undefined {
+        return this.jidResolver.canonical(jid);
     }
 
     public isVerbose(): boolean {
@@ -238,18 +204,6 @@ export class WhatsAppService {
         }
     }
 
-    private normalizeContactNumber(value: string): string {
-        if (value.startsWith('+')) {
-            return value;
-        }
-
-        if (/^\d+$/.test(value)) {
-            return `+${value}`;
-        }
-
-        return value;
-    }
-
     private normalizeRecipientJid(jid: string): string {
         if (jid.includes('@')) return jid;
         const digits = jid.startsWith('+') ? jid.slice(1) : jid;
@@ -261,7 +215,7 @@ export class WhatsAppService {
             return recipient;
         }
 
-        const senderNumber = this.normalizeContactNumber(recipient.split('@')[0]);
+        const senderNumber = this.jidResolver.senderNumber(recipient) ?? recipient;
         const allowedContact = this.sessionManager.getAllowedContact(recipient)
             ?? this.sessionManager.getAllowedContact(senderNumber);
 
@@ -385,6 +339,8 @@ export class WhatsAppService {
         this.socket.ev.removeAllListeners('creds.update');
         this.socket.ev.removeAllListeners('messages.upsert');
         this.socket.ev.removeAllListeners('group-participants.update');
+        this.socket.ev.removeAllListeners('lid-mapping.update');
+        this.socket.ev.removeAllListeners('groups.update');
 
         try {
             this.socket.end(undefined);
@@ -401,20 +357,34 @@ export class WhatsAppService {
 
     private registerSocketListeners(socket: WhatsAppSocketLike, options: WhatsAppStartOptions, saveCreds: () => Promise<void>) {
         socket.ev.on('creds.update', async () => {
+            if (socket !== this.socket || this.intentionalStop) return;
             await saveCreds();
-            await this.sessionManager.markAuthStateAvailable();
+            if (socket === this.socket && !this.intentionalStop) await this.sessionManager.markAuthStateAvailable();
         });
 
         socket.ev.on('connection.update', async (update) => {
+            if (socket !== this.socket || this.intentionalStop) return;
             await this.handleConnectionUpdate(update, options);
         });
 
         socket.ev.on('messages.upsert', (payload) => {
+            if (socket !== this.socket || this.intentionalStop) return;
             void this.handleIncomingMessages(payload);
         });
 
         socket.ev.on('group-participants.update', ({ id }) => {
-            this.groupMetadataCache.delete(id);
+            if (socket === this.socket) this.groupMetadataCache.delete(id);
+        });
+        socket.ev.on('groups.update', updates => {
+            if (socket !== this.socket) return;
+            for (const update of updates) {
+                if (update.id) this.groupMetadataCache.delete(update.id);
+            }
+        });
+        socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
+            if (socket !== this.socket || this.intentionalStop) return;
+            this.updateIdentityAccount();
+            this.jidResolver.bind(lid, pn);
         });
     }
 
@@ -426,7 +396,7 @@ export class WhatsAppService {
 
         const groupMetadataCache = this.groupMetadataCache;
 
-        const socket = makeWASocket({
+        const socket: WhatsAppSocketLike = makeWASocket({
             printQRInTerminal: false,
             auth: {
                 creds: state.creds,
@@ -434,7 +404,11 @@ export class WhatsAppService {
             },
             syncFullHistory: false,
             logger,
-            getMessage: async key => key.fromMe === false ? undefined : this.getCachedSentMessage(key.id),
+            getMessage: async key => {
+                if (socket !== this.socket || this.intentionalStop) return undefined;
+                this.updateIdentityAccount();
+                return this.messageStore.getForTransport(key)?.message;
+            },
             cachedGroupMetadata: async (jid: string) => {
                 return groupMetadataCache.get(jid) as any;
             }
@@ -546,6 +520,8 @@ export class WhatsAppService {
     }
 
     private async handleConnectionOpen() {
+        const socket = this.socket;
+        const context = this.getSessionContext();
         fileLog('[handleConnectionOpen] Connection established successfully');
         
         
@@ -557,8 +533,11 @@ export class WhatsAppService {
         this.reconnectAttempts = 0;
         this.clearReconnectTimeout();
         await this.saveCreds?.();
+        if (socket !== this.socket || !this.isSessionContextCurrent(context)) return;
         await this.sessionManager.markAuthStateAvailable();
+        if (socket !== this.socket || !this.isSessionContextCurrent(context)) return;
         await this.sessionManager.setStatus('connected');
+        if (socket !== this.socket || !this.isSessionContextCurrent(context)) return;
         this.onStatusUpdate?.(t('service.whatsapp.connected'));
 
         if (this.qrWasShown) {
@@ -570,12 +549,20 @@ export class WhatsAppService {
     }
 
     private async sendQrWelcome(): Promise<void> {
-        const rawId = this.socket?.user?.id;
-        if (!rawId) return;
+        const socket = this.socket;
+        const rawId = socket?.user?.id;
+        if (!socket || !rawId) return;
+        const context = this.getSessionContext();
         const selfJid = this.normalizeJidForComparison(rawId);
         await this.sessionManager.setOperatorJid(selfJid);
+        if (socket !== this.socket || !this.isSessionContextCurrent(context)) return;
         try {
-            await this.socket?.sendMessage(selfJid, { text: t('service.whatsapp.qrWelcomeMessage') });
+            const id = generateMessageIDV2();
+            this.registerOutgoing(selfJid, id);
+            const response = await socket.sendMessage(selfJid, { text: t('service.whatsapp.qrWelcomeMessage') }, { messageId: id });
+            if (this.isSessionContextCurrent(context)) {
+                this.cacheSentMessage(response?.key?.id, response?.message, { ...response?.key, remoteJid: selfJid });
+            }
         } catch {
             // Best-effort — welcome send failure must not abort the session.
         }
@@ -645,6 +632,7 @@ export class WhatsAppService {
                     console.error(t('service.whatsapp.sessionRejected', { statusCode: statusCode ?? 'unknown' }));
                 }
                 this.onStatusUpdate?.(t('service.whatsapp.sessionRejected', { statusCode: statusCode ?? 'unknown' }));
+                this.clearIdentityState();
                 await this.sessionManager.deleteAuthState();
                 await this.start({ ...options, allowPairingOnAuthFailure: false });
                 return;
@@ -696,17 +684,101 @@ export class WhatsAppService {
         return text.endsWith('π');
     }
 
-    private getIncomingTimestamp(timestamp: number | string | undefined): number {
-        if (typeof timestamp === 'number') {
-            return timestamp;
-        }
+    private getIncomingTimestamp(timestamp: WAMessage['messageTimestamp']): number {
+        const value = timestamp == null ? NaN : toNumber(timestamp);
+        return Number.isFinite(value) ? value : Date.now();
+    }
 
-        if (typeof timestamp === 'string') {
-            const parsed = Number(timestamp);
-            return Number.isFinite(parsed) ? parsed : Date.now();
-        }
+    public getAccountScope(): string {
+        return JSON.stringify([this.sessionManager.getAuthStateDir?.() ?? 'default', this.identityAccount || 'unpaired']);
+    }
 
-        return Date.now();
+    public getSessionContext(): WhatsAppSessionContext {
+        this.updateIdentityAccount();
+        return { accountScope: this.getAccountScope(), generation: this.sessionGeneration };
+    }
+
+    public isSessionContextCurrent(context: WhatsAppSessionContext): boolean {
+        this.updateIdentityAccount();
+        return !this.intentionalStop && context.generation === this.sessionGeneration
+            && context.accountScope === this.getAccountScope();
+    }
+
+    private updateIdentityAccount(): void {
+        const account = this.socket?.user?.id;
+        if (!account) return;
+        const normalized = this.jidResolver.normalize(account);
+        const authDir = this.sessionManager.getAuthStateDir?.() ?? 'default';
+        if (this.identityAccount && (this.identityAccount !== normalized || this.identityAuthDir !== authDir)) {
+            this.clearIdentityState();
+        }
+        this.identityAccount = normalized;
+        this.identityAuthDir = authDir;
+    }
+
+    private clearIdentityState(): void {
+        this.sessionGeneration++;
+        this.groupMetadataCache.clear();
+        this.incomingLedger.clear();
+        this.messageStore.clear();
+        this.jidResolver.clear();
+        this.identityAccount = '';
+        this.identityAuthDir = '';
+        this.lastRemoteJid = null;
+    }
+
+    private reindexIncomingLedger(): void {
+        const entries = [...this.incomingLedger.values()];
+        this.incomingLedger.clear();
+        for (const entry of entries) {
+            const id = this.jidResolver.index(entry.scope, entry.key);
+            if (!id) continue;
+            const existing = this.incomingLedger.get(id);
+            if (!existing) this.incomingLedger.set(id, entry);
+            else existing.expiresAt = Math.max(existing.expiresAt, entry.expiresAt);
+        }
+    }
+
+    private getIncomingKey(key: WAMessageKey): string | undefined {
+        return this.jidResolver.index(this.getAccountScope(), key);
+    }
+
+    private async observeIncomingIdentity(key: WAMessageKey, context: WhatsAppSessionContext): Promise<void> {
+        if (!this.isSessionContextCurrent(context)) return;
+        this.jidResolver.observe(key);
+        const jid = key.remoteJid;
+        if (!jid || !jid.endsWith('@lid') || this.jidResolver.canonical(jid) !== this.jidResolver.normalize(jid)) return;
+        const socket = this.socket;
+        const phone = await socket?.signalRepository?.lidMapping.getPNForLID(jid);
+        if (phone && socket === this.socket && this.isSessionContextCurrent(context)) this.jidResolver.bind(jid, phone);
+    }
+
+    private reserveIncoming(key: WAMessageKey): boolean {
+        const now = Date.now();
+        for (const [id, entry] of this.incomingLedger) {
+            if (entry.expiresAt <= now) this.incomingLedger.delete(id);
+        }
+        const id = this.getIncomingKey(key);
+        if (!id || this.incomingLedger.has(id)) return false;
+        while (this.incomingLedger.size >= 5_000) {
+            const oldest = this.incomingLedger.keys().next().value;
+            if (oldest === undefined) break;
+            this.incomingLedger.delete(oldest);
+        }
+        this.incomingLedger.set(id, { key: { ...key }, scope: this.getAccountScope(), state: 'reserved', expiresAt: now + 24 * 60 * 60 * 1000 });
+        return true;
+    }
+
+    public markIncomingProcessing(key: WAMessageKey, state: IncomingProcessingState): void {
+        const id = this.getIncomingKey(key);
+        const entry = id ? this.incomingLedger.get(id) : undefined;
+        if (entry) entry.state = state;
+    }
+
+    public getIncomingProcessingState(key: WAMessageKey): IncomingProcessingState | undefined {
+        const id = this.getIncomingKey(key);
+        const entry = id ? this.incomingLedger.get(id) : undefined;
+        return entry && entry.expiresAt > Date.now() ? entry.state : undefined;
     }
 
     private async recordIncomingMessage(message: IncomingMessageLike, remoteJid: string, text: string) {
@@ -715,13 +787,14 @@ export class WhatsAppService {
         const quotedMessage = 'quotedMessage' in resolved ? resolved.quotedMessage : undefined;
 
         // Don't record reactions in the recents store - they are events about existing messages
-        if (resolved.kind === 'reaction') {
+        if (resolved.kind === 'reaction' || resolved.kind === 'system') {
             return;
         }
 
-        void Promise.resolve(this.onIncomingMessageRecorded?.({
+        await Promise.resolve(this.onIncomingMessageRecorded?.({
             id: message.key.id ?? remoteJid,
             remoteJid,
+            senderNumber: this.jidResolver.senderNumber(remoteJid) ?? remoteJid,
             pushName: message.pushName || undefined,
             text,
             timestamp: this.getIncomingTimestamp(message.messageTimestamp),
@@ -734,68 +807,56 @@ export class WhatsAppService {
     }
 
     public async handleIncomingMessages(payload: MessagesUpsertEvent) {
-        if (this.sessionManager.getStatus() !== 'connected') return;
+        if (this.intentionalStop || this.sessionManager.getStatus() !== 'connected') return;
+        const context = this.getSessionContext();
+        for (const message of payload.messages ?? []) {
+            if (!this.isSessionContextCurrent(context) || this.sessionManager.getStatus() !== 'connected') break;
+            try {
+                await this.handleIncomingMessage(message, payload.type !== 'append' && !payload.requestId, context);
+            } catch (error) {
+                if (message?.key && this.isSessionContextCurrent(context)) this.markIncomingProcessing(message.key, 'failed');
+                console.error(t('service.whatsapp.failedRecordRecentMessage'), error instanceof Error ? error.message : 'Message processing failed');
+            }
+        }
+    }
 
-        const message = payload.messages?.[0];
-        if (!message || !message.key.remoteJid) return;
+    private async handleIncomingMessage(message: IncomingMessageLike, live: boolean, context: WhatsAppSessionContext): Promise<void> {
+        const { id, remoteJid } = message?.key ?? {};
+        if (!id || !remoteJid || !message.message) return;
+        if (this.boundGroupJid && remoteJid !== this.boundGroupJid) return;
+        if (message.key.fromMe && this.isPiGeneratedMessage(this.extractText(message.message))) return;
 
-        const text = this.extractText(message.message);
-        if (this.isPiGeneratedMessage(text)) return;
-
-        const remoteJid = message.key.remoteJid;
+        await this.observeIncomingIdentity(message.key, context);
+        if (!this.isSessionContextCurrent(context)) return;
         const isGroup = remoteJid.endsWith('@g.us');
-
-        if (this.boundGroupJid) {
-            // Group-only mode narrows the source before allow-list checks run.
-            if (remoteJid !== this.boundGroupJid) return;
-        }
-
-        // Eagerly cache group metadata on incoming messages so it's
-        // available for sender-key encryption when we reply
-        if (isGroup) {
-            void this.prepareGroupSession(remoteJid);
-        }
-
-        const senderJid = isGroup
-            ? remoteJid
-            : this.normalizeContactNumber(remoteJid.split('@')[0]);
-        
-        // Process the message with full context (including reaction lookup)
+        const senderNumber = this.jidResolver.senderNumber(remoteJid);
+        if (!senderNumber) return;
         const resolved = extractIncomingText(message.message, this.recentsService);
-        const displayText = resolved.text;
-        
-        void this.recordIncomingMessage(message, remoteJid, displayText);
-
-        const pushName = message.pushName || undefined;
-
-        if (this.boundGroupJid) {
-            if (!this.sessionManager.isAllowedGroup(this.boundGroupJid)) {
-                await this.sessionManager.trackIgnoredNumber(this.boundGroupJid, pushName);
-                return;
-            }
-
-            this.lastRemoteJid = remoteJid;
-            this.onMessage?.(payload);
+        if (!this.sessionManager.isConversationAllowed(senderNumber)) {
+            await this.recordIncomingMessage(message, remoteJid, resolved.text);
+            if (this.isSessionContextCurrent(context)) await this.sessionManager.trackIgnoredNumber(senderNumber, message.pushName || undefined);
             return;
         }
-
-        if (!this.sessionManager.isConversationAllowed(senderJid)) {
-            if (this.isVerbose()) {
-                console.log(t('service.whatsapp.ignoredNotAllowed', { senderJid }));
-            }
-            await this.sessionManager.trackIgnoredNumber(senderJid, pushName);
-            return;
-        }
+        if (this.messageStore.isOwn(message.key)) return;
+        if (resolved.kind === 'system' || resolved.kind === 'reaction') return;
+        if (live && !this.reserveIncoming(message.key)) return;
+        this.messageStore.put(message);
+        await this.recordIncomingMessage(message, remoteJid, resolved.text);
+        if (!live || !this.isSessionContextCurrent(context)) return;
+        if (isGroup) void this.prepareGroupSession(remoteJid);
 
         this.lastRemoteJid = remoteJid;
-        this.onMessage?.(payload);
+        await this.onMessage?.({ ...message, key: { ...message.key, id, remoteJid }, senderNumber, sessionContext: context });
+        if (this.isSessionContextCurrent(context) && this.getIncomingProcessingState(message.key) === 'reserved') {
+            this.markIncomingProcessing(message.key, 'prepared');
+        }
     }
 
     setQRCodeCallback(callback: (qr: string) => void) {
         this.onQRCode = callback;
     }
 
-    setMessageCallback(callback: (m: MessagesUpsertEvent) => void) {
+    setMessageCallback(callback: (message: IncomingMessageEnvelope) => void | Promise<void>) {
         this.onMessage = callback;
     }
 
@@ -828,9 +889,11 @@ export class WhatsAppService {
         }
         const socket = this.getActiveSocket();
         if (!socket) return;
+        const context = this.getSessionContext();
         try {
             fileLog(`Fetching group metadata for ${jid}...`);
             const metadata = await socket.groupMetadata(jid);
+            if (socket !== this.socket || !this.isSessionContextCurrent(context)) return;
             this.groupMetadataCache.set(jid, metadata);
             fileLog(`Cached group metadata for ${jid} (${metadata.participants?.length ?? 0} participants)`);
         } catch (error) {
@@ -838,19 +901,21 @@ export class WhatsAppService {
         }
     }
 
-    async sendMessage(jid: string, text: string) {
-        const recipientJid = this.resolveOutboundRecipientJid(jid);
+    async sendMessage(jid: string, text: string, preserveTransport = false) {
+        const sessionContext = this.getSessionContext();
+        const recipientJid = preserveTransport ? jid : this.resolveOutboundRecipientJid(jid);
 
         // Ensure we show the typing indicator before sending
         await this.sendPresence(recipientJid, 'composing');
 
         const result = await this.messageSender.send({
             recipientJid,
-            text: text
+            text: text,
+            sessionContext
         });
 
         // After sending, we can stop the typing indicator
-        await this.sendPresence(recipientJid, 'paused');
+        if (this.isSessionContextCurrent(sessionContext)) await this.sendPresence(recipientJid, 'paused');
 
         if (!result.success) {
             console.error(t('service.whatsapp.failedSendMessage', { jid: recipientJid, error: result.error ?? t('message.sender.unknownError') }));
@@ -860,6 +925,7 @@ export class WhatsAppService {
     }
 
     async sendMenuMessage(jid: string, text: string) {
+        const sessionContext = this.getSessionContext();
         const normalizedJid = this.resolveOutboundRecipientJid(jid);
         const socket = this.getActiveSocket();
 
@@ -873,23 +939,22 @@ export class WhatsAppService {
 
         try {
             await this.sendPresence(normalizedJid, 'composing');
-            const response = await socket.sendMessage(normalizedJid, { text });
-            this.cacheSentMessage(response?.key?.id, response?.message);
-            await this.sendPresence(normalizedJid, 'paused');
-
-            return {
-                success: true,
-                messageId: response?.key?.id,
-                attempts: 1
-            };
+            return await this.messageSender.send({
+                recipientJid: normalizedJid,
+                text,
+                options: { brand: false, maxRetries: 1 },
+                sessionContext
+            });
         } catch (error: unknown) {
-            await this.sendPresence(normalizedJid, 'paused');
+            if (this.isSessionContextCurrent(sessionContext)) await this.sendPresence(normalizedJid, 'paused');
             console.error(t('service.whatsapp.failedSendMenuMessage', { jid: normalizedJid }), error);
             return {
                 success: false,
                 error: error instanceof Error ? error.message : 'Unknown error',
                 attempts: 1
             };
+        } finally {
+            if (this.isSessionContextCurrent(sessionContext)) await this.sendPresence(normalizedJid, 'paused');
         }
     }
 
@@ -905,11 +970,12 @@ export class WhatsAppService {
         }
     }
 
-    async markRead(jid: string, messageId: string, fromMe: boolean = false) {
+    async markRead(key: WAMessageKey) {
         const socket = this.getActiveSocket();
-        if (!socket) return;
+        if (!socket || !key.remoteJid || !key.id || key.fromMe == null) return;
+        if (key.remoteJid.endsWith('@g.us') && !key.participant) return;
         try {
-            await socket.readMessages([{ remoteJid: jid, id: messageId, fromMe }]);
+            await socket.readMessages([{ ...key }]);
         } catch (error) {
             if (this.verboseMode) {
                 console.error(t('service.whatsapp.failedMarkRead'), error);
@@ -920,15 +986,18 @@ export class WhatsAppService {
     async logout() {
         fileLog('[logout] Logging out - setting intentional stop');
         this.intentionalStop = true;
+        this.sessionGeneration++;
         await this.socket?.logout();
         this.cleanupSocket();
         this.isReconnecting = false;
+        this.clearIdentityState();
         await this.sessionManager.deleteAuthState();
     }
 
     async stop() {
         fileLog('[stop] Stopping WhatsApp service - setting intentional stop');
         this.intentionalStop = true;
+        this.sessionGeneration++;
         try {
             await this.saveCreds?.();
         } catch (error) {
@@ -939,6 +1008,7 @@ export class WhatsAppService {
         }
 
         this.cleanupSocket();
+        this.messageStore.clear();
         this.isReconnecting = false;
         await this.sessionManager.setStatus('disconnected');
         this.onStatusUpdate?.(t('service.whatsapp.disconnected'));
