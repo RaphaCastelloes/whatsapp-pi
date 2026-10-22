@@ -1,4 +1,19 @@
+import type { WAMessage, WAMessageKey, AnyMessageContent, MiscMessageGenerationOptions } from 'baileys';
+
 export type SessionStatus = 'logged-out' | 'pairing' | 'connected' | 'disconnected';
+
+export type IncomingProcessingState = 'reserved' | 'prepared' | 'handed-off' | 'consumed' | 'failed';
+
+export interface WhatsAppSessionContext {
+    readonly accountScope: string;
+    readonly generation: number;
+}
+
+export type IncomingMessageEnvelope = Pick<WAMessage, 'message' | 'pushName' | 'messageTimestamp'> & {
+    key: WAMessageKey & { id: string; remoteJid: string };
+    senderNumber: string;
+    sessionContext: WhatsAppSessionContext;
+};
 
 export interface WhatsAppSession {
     id: string;
@@ -19,16 +34,38 @@ export interface QuotedMessageInfo {
 export interface IncomingMessage {
     id: string;
     remoteJid: string;
+    senderNumber?: string;
     pushName?: string;
     text?: string;
     timestamp: number;
     quotedMessage?: QuotedMessageInfo;
 }
 
+export interface QuoteTarget {
+    messageId: string;
+    conversationJid?: string;
+    fromMe?: boolean;
+    participant?: string;
+}
+
+export interface TextSendOptions {
+    quote?: QuoteTarget;
+    signal?: AbortSignal;
+    onSettled?: (result: MessageResult) => void | Promise<void>;
+}
+
 export interface MessageRequest {
     recipientJid: string;
     text: string;
+    content?: AnyMessageContent;
+    quote?: QuoteTarget;
+    sendOptions?: MiscMessageGenerationOptions;
+    sessionContext?: WhatsAppSessionContext;
+    signal?: AbortSignal;
+    sendTimeoutMs?: number;
+    onSettled?: (result: MessageResult) => void | Promise<void>;
     options?: {
+        brand?: boolean;
         maxRetries?: number;
         priority?: 'high' | 'normal';
     };
@@ -36,6 +73,7 @@ export interface MessageRequest {
 
 export interface MessageResult {
     success: boolean;
+    delivery?: 'unknown';
     messageId?: string;
     error?: string;
     attempts: number;
@@ -63,6 +101,7 @@ export interface DocumentMetadata {
 export type MessageDirection = 'incoming' | 'outgoing';
 
 export interface RecentConversationMessage {
+    quotedMessageId?: string;
     messageId: string;
     senderNumber: string;
     text: string;
@@ -81,6 +120,7 @@ export interface RecentConversationSummary {
 }
 
 export interface SelectedMessageContext {
+    quoteAvailable?: boolean;
     messageId: string;
     senderNumber: string;
     senderName?: string;

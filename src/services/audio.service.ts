@@ -4,13 +4,12 @@ import { promisify } from 'node:util';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import ffmpegStatic from 'ffmpeg-static';
+import { getFfmpegCommands } from './ffmpeg-path.js';
 import { createStoragePaths } from './storage-path.js';
 import { WhatsAppPiLogger } from './whatsapp-pi.logger.js';
 import { tryCreateWhisperCppAudioTranscriber, type AudioTranscriber } from './whisper-cpp-audio.transcriber.js';
 import { t } from '../i18n.js';
 
-const staticFfmpegPath = ffmpegStatic as unknown as string | null;
 const execFileAsync = promisify(execFile);
 
 type AudioLogger = Pick<WhatsAppPiLogger, 'log' | 'error'>;
@@ -20,10 +19,7 @@ export class AudioService {
     private readonly mediaDir = createStoragePaths().mediaDir;
     private readonly logger: AudioLogger;
     private readonly whisperCppTranscriber: AudioTranscriber | null;
-    private readonly ffmpegCommands = [
-        process.env.FFMPEG_PATH ?? (process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'),
-        ...(staticFfmpegPath ? [staticFfmpegPath] : [])
-    ];
+    private readonly ffmpegCommands = getFfmpegCommands();
 
     constructor(logger: AudioLogger = new WhatsAppPiLogger(false), whisperCppTranscriber?: AudioTranscriber | null) {
         this.logger = logger;

@@ -602,7 +602,11 @@ export class MenuHandler {
                 return;
             }
 
+            const quoteAvailable = Boolean(this.whatsappService.getQuotedMessage(selectedMessage.senderNumber, {
+                messageId: selectedMessage.messageId, fromMe: selectedMessage.direction === 'outgoing'
+            }));
             const detailAction = await showMessageDetailView(ctx, {
+                quoteAvailable,
                 title: t('menu.recents.history.messageTitle', { displayName }),
                 messageId: selectedMessage.messageId,
                 senderNumber: selectedMessage.senderNumber,
