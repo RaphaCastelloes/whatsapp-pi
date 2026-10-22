@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetI18n } from '../../src/i18n.ts';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { MessageRequest } from '../../src/models/whatsapp.types.ts';
 
 const mocks = vi.hoisted(() => {
     const createSessionManager = () => ({
@@ -28,7 +32,18 @@ const mocks = vi.hoisted(() => {
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),
         sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 }),
+        sendContent: vi.fn(async (request: MessageRequest) => {
+            const result = { success: true, messageId: 'MEDIA123', attempts: 1 };
+            await request.onSettled?.(result);
+            return result;
+        }),
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
+        canonicalConversation: vi.fn((jid: string) => jid),
+        getQuotedMessage: vi.fn(),
+        getAccountScope: vi.fn().mockReturnValue('fixture-account'),
+        getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
+        isSessionContextCurrent: vi.fn().mockReturnValue(true),
+        markIncomingProcessing: vi.fn(),
         getLastRemoteJid: vi.fn().mockReturnValue('5511999998888@s.whatsapp.net'),
         markRead: vi.fn(),
         sendPresence: vi.fn().mockResolvedValue(undefined)
@@ -174,10 +189,59 @@ describe('whatsapp-pi extension', () => {
         expect(pi.flags.has('whatsapp-group')).toBe(true);
         expect(pi.commands.has('whatsapp')).toBe(true);
         expect(pi.tools.has('send_wa_message')).toBe(true);
+        expect(pi.tools.has('send_wa_media')).toBe(true);
         expect(pi.handlers.has('session_start')).toBe(true);
         expect(pi.handlers.has('agent_start')).toBe(true);
         expect(pi.handlers.has('message_end')).toBe(true);
         expect(pi.handlers.has('session_shutdown')).toBe(true);
+    });
+
+    it('sends explicit document metadata without putting attachment bytes in the tool result', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'wa-tool-file-'));
+        try {
+            const path = join(root, 'test.md');
+            await writeFile(path, 'FIXTURE-BYTES-NOT-FOR-TRANSCRIPT');
+            const registerExtension = await loadExtension();
+            const pi = createMockPi();
+            registerExtension(pi as any);
+            const result = await pi.tools.get('send_wa_media').execute('media-call', { path, type: 'document', jid: '15550000001@s.whatsapp.net' }, new AbortController().signal, undefined, { ...createMockContext(), cwd: root });
+            expect(result.isError).toBe(false);
+            expect(JSON.parse(result.content[0].text)).toMatchObject({ success: true, media: { fileName: 'test.md', mimetype: 'text/markdown' } });
+            expect(result.content[0].text).not.toContain('FIXTURE-BYTES-NOT-FOR-TRANSCRIPT');
+            expect(mocks.whatsappService.sendContent).toHaveBeenCalledWith(expect.objectContaining({ recipientJid: '15550000001@s.whatsapp.net', sendOptions: { mediaUploadTimeoutMs: 60_000 } }));
+            expect(mocks.recentsService.recordMessage).toHaveBeenCalledOnce();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('adds the selected native quote to a text tool send and records its relationship', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        registerExtension(pi as any);
+        const jid = '15550000001@s.whatsapp.net';
+        mocks.whatsappService.getQuotedMessage.mockReturnValue({ key: { remoteJid: jid, id: 'original', fromMe: false }, message: { conversation: 'Retained' } });
+        mocks.whatsappService.sendMessage.mockImplementationOnce(async (_jid, _text, _preserve, options) => {
+            const result = { success: true, messageId: 'quoted-send', attempts: 1 };
+            await options.onSettled(result);
+            return result;
+        });
+        const quote = { messageId: 'original', conversationJid: jid, fromMe: false };
+        const result = await pi.tools.get('send_wa_message').execute('quote', { jid, message: 'Reply', quote });
+        expect(result.isError).toBe(false);
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(jid, 'Reply', true, expect.objectContaining({ quote }));
+        expect(mocks.recentsService.recordMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedMessageId: 'original' }));
+    });
+
+    it.each(['send_wa_message', 'send_wa_media'])('does not silently drop an unavailable quote in %s', async tool => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        registerExtension(pi as any);
+        const result = await pi.tools.get(tool).execute('missing-quote', { jid: '15550000001@s.whatsapp.net', message: 'No fallback', path: 'irrelevant.pdf', type: 'document', quote: { messageId: 'missing' } });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain('Native quote unavailable');
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.whatsappService.sendContent).not.toHaveBeenCalled();
     });
 
     it('does not call the removed pi.events i18n API', async () => {
@@ -330,15 +394,13 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA1',
-                    remoteJid: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: 'hello' }
-            }]
+            key: {
+                id: 'WA1',
+                remoteJid: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: 'hello' }
         });
 
         expect(mocks.extractIncomingText).toHaveBeenCalledWith({ conversation: 'hello' }, mocks.recentsService);
@@ -346,12 +408,20 @@ describe('whatsapp-pi extension', () => {
             { kind: 'text', text: 'hello from whatsapp' },
             'Ana'
         );
-        expect(mocks.whatsappService.markRead).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'WA1', false);
-        expect(mocks.whatsappService.sendPresence).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'composing');
+        expect(mocks.whatsappService.markRead).toHaveBeenCalledWith({ remoteJid: '5511999998888@s.whatsapp.net', id: 'WA1', fromMe: false });
+        expect(mocks.whatsappService.sendPresence).not.toHaveBeenCalled();
         expect(pi.sendUserMessage).toHaveBeenCalledWith(
-            'Message from Ana (5511999998888): hello from whatsapp',
+            expect.stringContaining('Message from Ana (5511999998888): hello from whatsapp'),
             { deliverAs: 'followUp' }
         );
+        const submitted = pi.sendUserMessage.mock.calls[0][0] as string;
+        expect(submitted).toMatch(/^\[WhatsApp request [\da-f-]+\]/);
+        const ctx = createMockContext();
+        await pi.handlers.get('input')!({ source: 'extension', text: submitted }, ctx);
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: submitted }] } }, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'assistant', content: [] } }, ctx);
+        expect(mocks.whatsappService.sendPresence).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'composing');
     });
 
     it('executes /compact commands received from WhatsApp', async () => {
@@ -365,21 +435,21 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA1',
-                    remoteJid: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: '/compact' }
-            }]
+            key: {
+                id: 'WA1',
+                remoteJid: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: '/compact' }
         });
 
         expect(ctx.compact).toHaveBeenCalledOnce();
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
         expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
             '5511999998888@s.whatsapp.net',
-            'Session compacted successfully! ✅'
+            'Session compaction requested. ✅',
+            true
         );
     });
 
@@ -407,6 +477,7 @@ describe('whatsapp-pi extension', () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
         mocks.whatsappService.getLastRemoteJid.mockReturnValue('5511999998888@lid');
+        mocks.whatsappService.canonicalConversation.mockImplementation(jid => jid.replace(/@lid$/, '@s.whatsapp.net'));
 
         registerExtension(pi as any);
         const result = await pi.tools.get('send_wa_message').execute(
@@ -455,20 +526,18 @@ describe('whatsapp-pi extension', () => {
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
-            messages: [{
-                key: {
-                    id: 'WA-GRP-1',
-                    remoteJid: '120363012345@g.us',
-                    participant: '5511999998888@s.whatsapp.net',
-                    fromMe: false
-                },
-                pushName: 'Ana',
-                message: { conversation: 'hello group' }
-            }]
+            key: {
+                id: 'WA-GRP-1',
+                remoteJid: '120363012345@g.us',
+                participant: '5511999998888@s.whatsapp.net',
+                fromMe: false
+            },
+            pushName: 'Ana',
+            message: { conversation: 'hello group' }
         });
 
         expect(pi.sendUserMessage).toHaveBeenCalledWith(
-            'Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp',
+            expect.stringContaining('Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp'),
             { deliverAs: 'followUp' }
         );
     });

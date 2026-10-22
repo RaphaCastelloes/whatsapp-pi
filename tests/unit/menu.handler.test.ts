@@ -46,6 +46,7 @@ const createContext = (choices: {
 const createServices = () => {
     const whatsappService = {
         getEffectiveStatus: vi.fn().mockReturnValue('connected'),
+        getQuotedMessage: vi.fn().mockReturnValue({ key: { id: 'MSG1', remoteJid: '5511999998888@s.whatsapp.net', fromMe: false }, message: { conversation: 'retained' } }),
         setQRCodeCallback: vi.fn(),
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),

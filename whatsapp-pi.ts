@@ -10,6 +10,9 @@ import { IncomingMediaService } from './src/services/incoming-media.service.js';
 import { WhatsAppPiLogger } from './src/services/whatsapp-pi.logger.js';
 import { ReactionSender } from './src/services/reaction.sender.js';
 import { initI18n, t } from './src/i18n.js';
+import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './src/services/conversation-router.service.js';
+import type { MessageResult, QuoteTarget, TextSendOptions } from './src/models/whatsapp.types.js';
+import { OutgoingMediaService } from './src/services/outgoing-media.service.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -40,6 +43,12 @@ export default function (pi: ExtensionAPI) {
         default: ""
     });
 
+    pi.registerFlag("whatsapp-history-full", {
+        description: "Opt in to broader initial WhatsApp history sync; imports still obey allowed chats and archive limits.",
+        type: "boolean",
+        default: false
+    });
+
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const recentsService = new RecentsService(sessionManager);
@@ -49,6 +58,37 @@ export default function (pi: ExtensionAPI) {
     const incomingMediaService = new IncomingMediaService(audioService, logger);
     const menuHandler = new MenuHandler(whatsappService, sessionManager, recentsService);
     let _ctx: ExtensionContext | undefined;
+    const canonicalConversation = (jid: string) => whatsappService.canonicalConversation(jid);
+    const routingScope = () => {
+        const context = whatsappService.getSessionContext();
+        return JSON.stringify([context.accountScope, context.generation]);
+    };
+    const router = new ConversationRouter(
+        canonicalConversation,
+        routingScope,
+        key => whatsappService.markIncomingProcessing(key, 'consumed')
+    );
+
+    pi.on('input', event => { router.observeInput(event); });
+    pi.on('session_before_switch', () => { router.reset(); });
+
+    const trackOwnedSend = async (jid: string, snapshot: RoutingSnapshot | undefined, send: () => Promise<MessageResult>): Promise<MessageResult> => {
+        if (snapshot && snapshot.epoch.scope !== routingScope()) {
+            return { success: false, error: t('message.sender.sessionChanged'), attempts: 0 };
+        }
+        const token = router.beginSend(snapshot, jid);
+        try {
+            const result = await send();
+            router.finishSend(token, result);
+            return result;
+        } catch (error) {
+            router.finishSend(token, { success: false, delivery: 'unknown' });
+            throw error;
+        }
+    };
+    const sendWithOwnership = (jid: string, text: string, snapshot: RoutingSnapshot | undefined, options?: TextSendOptions): Promise<MessageResult> => trackOwnedSend(jid, snapshot, () => options
+        ? whatsappService.sendMessage(jid, text, true, options)
+        : snapshot?.target === jid ? whatsappService.sendMessage(jid, text, true) : whatsappService.sendMessage(jid, text));
 
     const formatFooterStatus = (status: string) => {
         if (status !== t("service.whatsapp.connected")) {
@@ -92,6 +132,7 @@ export default function (pi: ExtensionAPI) {
 
     // Initial status setup
     pi.on("session_start", async (_event, ctx) => {
+        router.reset();
         _ctx = ctx;
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
@@ -117,6 +158,7 @@ export default function (pi: ExtensionAPI) {
             logger.log(`[WhatsApp-Pi] Group-only mode: bound to ${boundGroupJid}`);
         }
 
+        whatsappService.setFullHistorySync?.(pi.getFlag("whatsapp-history-full") === true);
         await sessionManager.ensureInitialized();
         await recentsService.ensureInitialized();
         installGracefulShutdownHandlers();
@@ -128,9 +170,9 @@ export default function (pi: ExtensionAPI) {
         };
         whatsappService.setIncomingMessageRecorder(async (message) => {
             const isGroup = message.remoteJid.endsWith('@g.us');
-            const senderNumber = isGroup
+            const senderNumber = message.senderNumber ?? (isGroup || message.remoteJid.endsWith('@lid')
                 ? message.remoteJid
-                : `+${message.remoteJid.split('@')[0]}`;
+                : `+${message.remoteJid.split('@')[0].split(':')[0]}`);
             await recentsService.recordMessage({
                 messageId: message.id,
                 senderNumber,
@@ -207,38 +249,28 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
     });
 
-    // Track whether send_wa_message tool already sent a reply this turn
-    let toolSentToJid: string | null = null;
-
     const toRecentSenderNumber = (recipientJid: string): string => {
-        if (recipientJid.endsWith('@g.us')) {
-            return recipientJid;
-        }
-
-        return `+${recipientJid.split('@')[0]}`;
-    };
-
-    const normalizeJidLocalPart = (jid: string): string => {
-        return jid.split('@')[0].split(':')[0].replace(/^\+/, '');
+        const canonical = canonicalConversation(recipientJid) ?? recipientJid;
+        return /^\d+@s\.whatsapp\.net$/.test(canonical) ? `+${canonical.split('@')[0]}` : canonical;
     };
 
     const resolveToolRecipientJid = (params: { jid?: string; recipient_jid?: string }): string | null => {
         const providedJid = params.jid || params.recipient_jid;
-        const lastRemoteJid = whatsappService.getLastRemoteJid();
+        const lastRemoteJid = router.isActive() ? router.defaultTarget() : whatsappService.getLastRemoteJid();
 
         if (!providedJid) {
+            if (router.isActive()) return lastRemoteJid || null;
             return lastRemoteJid || whatsappService.getOperatorJid() || null;
         }
 
-        // When replying to the active WhatsApp conversation, never trust a JID
-        // reconstructed from the displayed phone number (e.g. number@s.whatsapp.net).
-        // Some chats arrive as @lid or other Baileys identifiers; using the exact
-        // remoteJid from the incoming event is the only reliable target.
+        // A verified PN/LID alias may identify the current chat, but sending still
+        // uses that request's original transport JID. Never infer aliases from digits.
+        const canonicalProvided = canonicalConversation(providedJid);
         if (
             lastRemoteJid
             && !SessionManager.isGroupJid(providedJid)
             && !SessionManager.isGroupJid(lastRemoteJid)
-            && normalizeJidLocalPart(providedJid) === normalizeJidLocalPart(lastRemoteJid)
+            && canonicalProvided && canonicalProvided === canonicalConversation(lastRemoteJid)
             && providedJid !== lastRemoteJid
         ) {
             logger.log(`[WhatsApp-Pi] send_wa_message: using active remoteJid ${lastRemoteJid} instead of reconstructed JID ${providedJid}`);
@@ -249,9 +281,9 @@ export default function (pi: ExtensionAPI) {
     };
 
     // Handle incoming messages by injecting them as user prompts
-    whatsappService.setMessageCallback(async (m) => {
-        const msg = m.messages?.[0];
-        if (!msg?.message) return;
+    whatsappService.setMessageCallback(async (msg) => {
+        if (!msg.message || !whatsappService.isSessionContextCurrent(msg.sessionContext)) return;
+        const runtimeId = router.getRuntimeId();
 
         const remoteJid = msg.key.remoteJid;
         const isGroup = remoteJid?.endsWith('@g.us') || false;
@@ -259,14 +291,9 @@ export default function (pi: ExtensionAPI) {
         const sender = remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
-        // Mark as read and start typing indicator immediately
         if (remoteJid && msg.key.id) {
-            whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
-            whatsappService.sendPresence(remoteJid, 'composing');
+            void whatsappService.markRead(msg.key);
         }
-
-        // Reset tool-sent flag for this new incoming message
-        toolSentToJid = null;
 
         const resolved = extractIncomingText(msg.message, recentsService);
         if (resolved.kind === 'system') {
@@ -275,6 +302,10 @@ export default function (pi: ExtensionAPI) {
         }
 
         const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
+        if (runtimeId !== router.getRuntimeId() || !whatsappService.isSessionContextCurrent(msg.sessionContext)) {
+            if (whatsappService.isSessionContextCurrent(msg.sessionContext)) whatsappService.markIncomingProcessing(msg.key, 'failed');
+            return;
+        }
 
         // Format message header with group context when applicable
         const messageHeader = isGroup
@@ -290,23 +321,16 @@ export default function (pi: ExtensionAPI) {
 
         logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
 
-        // Use a standard delivery for ALL messages to ensure TUI consistency
-        if (imageBuffer && imageMimeType) {
-            pi.sendUserMessage([
-                { type: "text", text: `${messageHeader} ${fullText}` },
-                { type: "image", data: imageBuffer.toString('base64'), mimeType: imageMimeType }
-            ], { deliverAs: "followUp" });
-        } else {
-            pi.sendUserMessage(`${messageHeader} ${fullText}`, { deliverAs: "followUp" });
-        }
+        whatsappService.markIncomingProcessing?.(msg.key, 'prepared');
 
-        // Handle commands
+        // Commands must not also become ordinary agent prompts.
         if (text.trim().toLowerCase().startsWith('/compact')) {
             logger.log(`[WhatsApp-Pi] Session compact requested by ${pushName}.`);
 
             if (_ctx) {
+                router.reset();
                 _ctx.compact();
-                await whatsappService.sendMessage(remoteJid!, "Session compacted successfully! ✅");
+                await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
             }
             return;
         }
@@ -314,25 +338,43 @@ export default function (pi: ExtensionAPI) {
         if (text.trim().toLowerCase().startsWith('/abort')) {
             logger.log(`[WhatsApp-Pi] Abort requested by ${pushName}.`);
             if (_ctx) {
+                router.reset();
                 _ctx.abort();
-                await whatsappService.sendMessage(remoteJid!, "Aborted! ✅");
+                await whatsappService.sendMessage(remoteJid, "Aborted! ✅", true);
             }
             return;
         }
 
-        
+        const content: RoutedContent = imageBuffer && imageMimeType ? [
+            { type: 'text', text: `${messageHeader} ${fullText}` },
+            { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
+        ] : `${messageHeader} ${fullText}`;
+        const submitted = router.prepare(content, msg.key);
+        // Preserve Pi input policies; ownership requires observed, exact consumed content.
+        pi.sendUserMessage(submitted.content as Parameters<ExtensionAPI['sendUserMessage']>[0], { deliverAs: 'followUp' });
+        whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
     });
+
+    const quoteSchema = Type.Object({
+        messageId: Type.String({ minLength: 1 }),
+        conversationJid: Type.Optional(Type.String({ description: 'Original chat; must match the recipient.' })),
+        fromMe: Type.Optional(Type.Boolean()),
+        participant: Type.Optional(Type.String())
+    });
+    const quoteTarget = (input: Partial<QuoteTarget> | undefined): QuoteTarget | undefined => input
+        ? { ...input, messageId: input.messageId ?? '' } : undefined;
 
     // Register send_wa_message tool (LLM-callable)
     pi.registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
-        description: "Send a WhatsApp message to a contact or group. The 'jid' parameter is the WhatsApp JID (e.g. 5511999998888@s.whatsapp.net for contacts, or 120363012345@g.us for groups). If omitted, replies to the last conversation.",
-        promptSnippet: "send_wa_message({message, jid?}) - Send a WhatsApp message. When replying to the current/last WhatsApp conversation, omit jid; do not reconstruct a JID from the displayed sender number. Only pass jid for an explicit different contact/group using a known real WhatsApp JID (e.g. 120363012345@g.us). IMPORTANT: After calling this tool, do NOT generate any follow-up text or confirmation — the message is already delivered to WhatsApp. Your entire response to the user should be sent ONLY through this tool, not repeated in chat.",
+        description: "Send text to a known WhatsApp contact/group JID. If jid is omitted, uses the unique conversation owning the current turn. Ambiguous or terminal-only turns require an explicit JID; idle manual calls retain last-conversation/operator fallback.",
+        promptSnippet: "send_wa_message({message, jid?, quote?}) - Send text, optionally quoting a retained same-chat message by ID. Omit jid only for the uniquely owned current WhatsApp conversation; never reconstruct it from a displayed number. Acceptance is not proof of recipient delivery. Do not duplicate a successful or delivery-unknown send. Report definite pre-send errors; never retry an uncertain outcome automatically.",
         parameters: Type.Object({
             jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
             recipient_jid: Type.Optional(Type.String({ description: "Alternative name for jid" })),
-            message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
+            message: Type.String({ minLength: 1, description: "Plain-text message content to send" }),
+            quote: Type.Optional(quoteSchema)
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
             // Resolve JID: explicit jid/recipient_jid, unless it is a reconstructed
@@ -342,7 +384,7 @@ export default function (pi: ExtensionAPI) {
                 return {
                     isError: true,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No JID provided and no active conversation to reply to", attempts: 0 }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: t('routing.destinationRequired'), attempts: 0 }) }]
                 };
             }
 
@@ -356,26 +398,95 @@ export default function (pi: ExtensionAPI) {
 
             const message = params.message ?? '';
 
-            const outboundJid = whatsappService.resolveOutboundRecipientJid(resolvedJid);
-            const result = await whatsappService.sendMessage(outboundJid, message);
-
-            if (result.success) {
-                // Mark that tool already sent to this JID — prevents message_end from re-sending
-                toolSentToJid = outboundJid;
-                await recentsService.recordMessage({
-                    messageId: result.messageId!,
-                    senderNumber: toRecentSenderNumber(outboundJid),
-                    text: message,
-                    direction: 'outgoing',
-                    timestamp: Date.now()
+            const snapshot = router.snapshot();
+            const quote = quoteTarget(params.quote);
+            const quotedJid = quote ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
+            if (quote && !quotedJid) return { isError: true, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: t('quote.unavailable'), attempts: 0 }) }] };
+            const outboundJid = quotedJid ?? (snapshot?.target === resolvedJid
+                ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid));
+            const recordResult = async (outcome: MessageResult) => {
+                if (outcome.success) await recentsService.recordMessage({
+                    messageId: outcome.messageId!, senderNumber: toRecentSenderNumber(outboundJid),
+                    text: message, direction: 'outgoing', timestamp: Date.now(),
+                    ...(quote ? { quotedMessageId: quote.messageId } : {})
                 });
-            }
+            };
+            const options = quote || _signal ? { quote, signal: _signal, onSettled: recordResult } : undefined;
+            const result = await sendWithOwnership(outboundJid, message, snapshot, options);
+            if (!options) await recordResult(result);
 
             return {
                 isError: !result.success,
                 details: undefined,
-                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts }) }]
+                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts, delivery: result.delivery }) }]
             };
+        }
+    });
+
+    pi.registerTool({
+        name: 'send_wa_media',
+        label: t('media.toolLabel'),
+        description: t('media.toolDescription'),
+        promptSnippet: 'send_wa_media({path,type,jid?,caption?,voiceNote?,quote?}) - Explicit local attachment upload only. Mentioned paths are not upload instructions. Do not resend a delivery-unknown outcome; it may still arrive.',
+        parameters: Type.Object({
+            path: Type.String({ minLength: 1, description: 'Local file under the current workspace or WhatsApp media directory. No URLs or base64.' }),
+            type: Type.Union([Type.Literal('document'), Type.Literal('image'), Type.Literal('audio'), Type.Literal('video')]),
+            voiceNote: Type.Optional(Type.Boolean({ description: 'Audio only: send as an Ogg/Opus voice note rather than a normal audio attachment. Audio captions are not supported.' })),
+            jid: Type.Optional(Type.String({ description: 'Known recipient JID. Omit only for a uniquely owned WhatsApp turn.' })),
+            caption: Type.Optional(Type.String({ maxLength: 4096 })),
+            quote: Type.Optional(quoteSchema)
+        }),
+        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+            const mediaPath = params.path;
+            const mediaType = params.type;
+            const quote = quoteTarget(params.quote);
+            const snapshot = router.snapshot();
+            const resolvedJid = resolveToolRecipientJid(params);
+            const failed = (error: string) => ({ success: false, error, attempts: 0 });
+            const quotedJid = quote && resolvedJid ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
+            let result: MessageResult;
+            let metadata: Awaited<ReturnType<OutgoingMediaService['prepare']>>['metadata'] | undefined;
+            if (!mediaPath || !mediaType) result = failed(t('media.invalidPath'));
+            else if (!resolvedJid) result = failed(t('routing.destinationRequired'));
+            else if (whatsappService.getStatus() !== 'connected') result = failed(t('tool.error.notConnected'));
+            else if (quote && !quotedJid) result = failed(t('quote.unavailable'));
+            else {
+                const target = quotedJid ?? (snapshot?.target === resolvedJid ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid));
+                const sessionContext = whatsappService.getSessionContext();
+                result = await trackOwnedSend(target, snapshot, async () => {
+                    let prepared: Awaited<ReturnType<OutgoingMediaService['prepare']>> | undefined;
+                    try {
+                        prepared = await new OutgoingMediaService({ workspaceRoot: ctx.cwd }).prepare({ path: mediaPath, type: mediaType, caption: params.caption, voiceNote: params.voiceNote }, signal);
+                        metadata = prepared.metadata;
+                        if (!whatsappService.isSessionContextCurrent(sessionContext)) {
+                            await prepared.dispose();
+                            return failed(t('message.sender.sessionChanged'));
+                        }
+                        const upload = prepared;
+                        return await whatsappService.sendContent({
+                            recipientJid: target, text: params.caption ?? '', content: upload.content,
+                            sessionContext, signal, quote, sendTimeoutMs: 60_000,
+                            options: { brand: false, maxRetries: 1 }, sendOptions: { mediaUploadTimeoutMs: 60_000 },
+                            onSettled: async outcome => {
+                                try {
+                                    if (outcome.success) await recentsService.recordMessage({
+                                        messageId: outcome.messageId!, senderNumber: toRecentSenderNumber(target),
+                                        ...(quote ? { quotedMessageId: quote.messageId } : {}),
+                                        text: `[${upload.metadata.type}] ${upload.metadata.fileName}${params.caption ? `\n${params.caption}` : ''}`,
+                                        direction: 'outgoing', timestamp: Date.now()
+                                    });
+                                } finally {
+                                    await upload.dispose();
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        await prepared?.dispose();
+                        return failed(error instanceof Error ? error.message : t('message.sender.unknownError'));
+                    }
+                });
+            }
+            return { isError: !result.success, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ ...result, media: metadata }) }] };
         }
     });
 
@@ -388,7 +499,9 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             jid: Type.String({ description: "WhatsApp JID of the chat (e.g. 5511999998888@s.whatsapp.net or 120363012345@g.us)" }),
             messageId: Type.String({ description: "ID of the message to react to" }),
-            emoji: Type.String({ description: "Emoji to react with (e.g., 👍, ❤️, 😂). Use empty string to remove reaction." })
+            emoji: Type.String({ description: "Emoji to react with (e.g., 👍, ❤️, 😂). Use empty string to remove reaction." }),
+            fromMe: Type.Optional(Type.Boolean({ description: "Direction of the original message, when needed to disambiguate its key." })),
+            participant: Type.Optional(Type.String({ description: "Original group participant JID, when needed to disambiguate its key." }))
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
             // Get socket from WhatsApp service
@@ -402,18 +515,45 @@ export default function (pi: ExtensionAPI) {
             }
 
             // Create sender with the socket
-            const sender = new ReactionSender(socket as any);
+            const sender = new ReactionSender(socket, options => whatsappService.findMessageKey(options.jid, options.messageId, {
+                fromMe: options.fromMe, participant: options.participant
+            }));
             const result = await sender.sendReaction({
                 jid: params.jid ?? '',
                 messageId: params.messageId ?? '',
-                emoji: params.emoji ?? ''
+                emoji: params.emoji ?? '',
+                fromMe: params.fromMe,
+                participant: params.participant
             });
 
             return {
                 isError: !result.success,
                 details: undefined,
-                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error }) }]
+                content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, delivery: result.delivery }) }]
             };
+        }
+    });
+
+    pi.registerTool({
+        name: "request_wa_history",
+        label: t('history.label'),
+        description: t('history.description'),
+        promptSnippet: "request_wa_history({mode:'request',jid,count?}) explicitly fetches bounded older history; {mode:'status',requestId?} reads retained status locally. Never call implicitly while listing local history.",
+        parameters: Type.Object({
+            mode: Type.Union([Type.Literal('request'), Type.Literal('status')]),
+            jid: Type.Optional(Type.String({ description: "Explicit allowed/bound conversation JID for a network request." })),
+            count: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+            requestId: Type.Optional(Type.String({ description: "Retained request ID for local status, or omit to list statuses." }))
+        }),
+        async execute(_id, params) {
+            try {
+                const result = params.mode === 'status' ? await whatsappService.getHistoryStatus(params.requestId)
+                    : params.jid ? await whatsappService.requestHistory(params.jid, params.count ?? 50)
+                        : { success: false, error: t('history.denied') };
+                return { isError: !result.success, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+            } catch {
+                return { isError: true, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: t('history.failed') }) }] };
+            }
         }
     });
 
@@ -426,11 +566,12 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             onlyIncoming: Type.Optional(Type.Boolean({ description: "Only return conversations whose last message is incoming (waiting for a reply)." })),
             onlyAllowed: Type.Optional(Type.Boolean({ description: "Only return conversations from senders/groups currently in the allow list." })),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of conversations to return (default 20)." }))
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of conversations to return (default 20)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID; available scopes are included in the result. Never fetches from WhatsApp." }))
         }),
         async execute(_toolCallId, params) {
             try {
-                const conversations = await recentsService.getRecentConversations();
+                const conversations = await recentsService.getRecentConversations(params.scope);
                 let filtered = conversations;
                 if (params.onlyIncoming) {
                     filtered = filtered.filter(c => c.lastMessageDirection === 'incoming');
@@ -443,7 +584,8 @@ export default function (pi: ExtensionAPI) {
                 return {
                     isError: false,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: filtered.length, conversations: filtered }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: filtered.length, conversations: filtered,
+                        scopes: await recentsService.getHistoryScopes?.(), storage: recentsService.getArchiveState?.() }) }]
                 };
             } catch (error) {
                 return {
@@ -463,7 +605,9 @@ export default function (pi: ExtensionAPI) {
         promptSnippet: "get_wa_conversation_history({senderNumber, limit?}) - Get the most recent messages with a sender. `senderNumber` accepts +E164 (e.g. +14155551212), raw digits, or a JID (e.g. 14155551212@s.whatsapp.net, 120363012345@g.us). Read-only.",
         parameters: Type.Object({
             senderNumber: Type.String({ description: "Phone number (+E164 or raw digits) or WhatsApp JID of the conversation." }),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of messages to return (default 20)." }))
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of messages to return (default 20)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID." })),
+            cursor: Type.Optional(Type.String({ description: "Opaque cursor from the previous local page. No network history request is made." }))
         }),
         async execute(_toolCallId, params) {
             if (!params.senderNumber || !params.senderNumber.trim()) {
@@ -474,13 +618,16 @@ export default function (pi: ExtensionAPI) {
                 };
             }
             try {
-                const messages = await recentsService.getConversationHistory(params.senderNumber);
                 const limit = typeof params.limit === 'number' ? params.limit : 20;
+                const page = recentsService.getArchiveState?.()?.enabled
+                    ? await recentsService.getHistoryPage(params.senderNumber, { limit, scope: params.scope, cursor: params.cursor }) : undefined;
+                if (!page && (params.scope || params.cursor)) throw new Error(t('archive.unknownScope'));
+                const messages = page?.messages ?? await recentsService.getConversationHistory(params.senderNumber);
                 const sliced = messages.slice(-limit);
                 return {
                     isError: false,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: sliced.length, messages: sliced }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: sliced.length, messages: sliced, nextCursor: page?.nextCursor, storage: page?.storage }) }]
                 };
             } catch (error) {
                 return {
@@ -499,11 +646,12 @@ export default function (pi: ExtensionAPI) {
         description: t("tool.checkNew.description"),
         promptSnippet: "check_wa_new_messages({sinceTimestamp?}) - List conversations whose most recent message is incoming (i.e. waiting for a reply). Optional `sinceTimestamp` (ms epoch) filters to messages newer than that. Read-only.",
         parameters: Type.Object({
-            sinceTimestamp: Type.Optional(Type.Integer({ minimum: 0, description: "Only include conversations whose last incoming message timestamp is strictly greater than this (ms since epoch)." }))
+            sinceTimestamp: Type.Optional(Type.Integer({ minimum: 0, description: "Only include conversations whose last incoming message timestamp is strictly greater than this (ms since epoch)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID." }))
         }),
         async execute(_toolCallId, params) {
             try {
-                const conversations = await recentsService.getRecentConversations();
+                const conversations = await recentsService.getRecentConversations(params.scope);
                 const since = typeof params.sinceTimestamp === 'number' ? params.sinceTimestamp : 0;
                 const pending = conversations.filter(c =>
                     c.lastMessageDirection === 'incoming' && c.lastMessageTime > since
@@ -523,9 +671,6 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    // Suppress automatic message_end reply when tool already sent
-    // This is checked by the message_end handler below
-
     // Register commands
     pi.registerCommand("whatsapp", {
         description: t("command.whatsapp.description"),
@@ -543,56 +688,42 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    // Handle outgoing messages (Agent -> WhatsApp)
-    pi.on("agent_start", async (_event, _ctx) => {
-        if (sessionManager.getStatus() !== 'connected') return;
-        const lastJid = whatsappService.getLastRemoteJid();
-        if (lastJid) {
-            await whatsappService.sendPresence(whatsappService.resolveOutboundRecipientJid(lastJid), 'composing');
+    pi.on('agent_start', () => { router.startRun(); });
+    pi.on('message_start', async (event) => {
+        if (event.message.role === 'user' || event.message.role === 'custom') router.consume(event.message);
+        if (event.message.role === 'assistant') {
+            router.freeze();
+            const target = router.defaultTarget();
+            if (target && sessionManager.getStatus() === 'connected') await whatsappService.sendPresence(target, 'composing');
         }
     });
-
-    pi.on("message_end", async (event, ctx) => {
+    pi.on('message_end', event => { router.buffer(event.message); });
+    pi.on('turn_end', async (_event, ctx) => {
         if (sessionManager.getStatus() !== 'connected') return;
-
-        const { message } = event;
-        // Only reply if it's the assistant and we have a valid target
-        if (message.role === "assistant") {
-            const lastJid = whatsappService.getLastRemoteJid();
-            const text = message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
-            const outboundJid = lastJid
-                ? whatsappService.resolveOutboundRecipientJid(lastJid)
-                : null;
-
-            // Skip if send_wa_message tool already sent a reply to this JID
-            if (toolSentToJid === outboundJid) {
-                toolSentToJid = null;
-                return;
-            }
-
-            if (outboundJid && text) {
-                try {
-                    const result = await whatsappService.sendMessage(outboundJid, text);
-                    if (result.success) {
-                        await recentsService.recordMessage({
-                            messageId: result.messageId ?? `${Date.now()}`,
-                            senderNumber: toRecentSenderNumber(outboundJid),
-                            text,
-                            direction: 'outgoing',
-                            timestamp: Date.now()
-                        });
-                        ctx.ui.notify(t("notify.replySent"), 'info');
-                    } else {
-                        ctx.ui.notify(t("notify.replyFailed"), 'error');
-                    }
-                } catch {
-                    ctx.ui.notify(t("notify.replyFailed"), 'error');
-                }
-            }
+        const mirror = router.mirror();
+        if (!mirror?.snapshot.target) return;
+        const target = mirror.snapshot.target;
+        try {
+            const result = await sendWithOwnership(target, mirror.text, mirror.snapshot);
+            if (result.success) {
+                await recentsService.recordMessage({
+                    messageId: result.messageId ?? `${Date.now()}`,
+                    senderNumber: toRecentSenderNumber(target), text: mirror.text,
+                    direction: 'outgoing', timestamp: Date.now()
+                });
+                ctx.ui.notify(t('notify.replySent'), 'info');
+            } else ctx.ui.notify(t('notify.replyFailed'), 'error');
+        } catch {
+            ctx.ui.notify(t('notify.replyFailed'), 'error');
         }
+    });
+    pi.on('agent_end', event => {
+        const last = [...event.messages].reverse().find(message => message.role === 'assistant');
+        router.endRun(last?.role === 'assistant' && last.stopReason === 'error');
     });
 
     pi.on("session_shutdown", async () => {
+        router.reset();
         logger.log("[WhatsApp-Pi] Session shutdown detected. Stopping WhatsApp service...");
         await whatsappService.stop();
     });
