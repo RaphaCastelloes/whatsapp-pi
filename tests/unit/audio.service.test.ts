@@ -96,7 +96,7 @@ describe('AudioService', () => {
 
         expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(audioMessage, 'audio');
         expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]));
-        expect(mocks.execFile).toHaveBeenCalledWith('ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true }, expect.any(Function));
+        expect(mocks.execFile).toHaveBeenCalledWith(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true }, expect.any(Function));
         expect(whisperTranscriber.transcribe).toHaveBeenCalledWith(wavPath);
         expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio download: 0 ms');
         expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio write file: 0 ms');

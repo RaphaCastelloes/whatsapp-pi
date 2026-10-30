@@ -65,25 +65,25 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('../../src/services/session.manager.ts', () => ({
-    SessionManager: Object.assign(vi.fn(() => mocks.sessionManager), {
+    SessionManager: Object.assign(vi.fn(function () { return mocks.sessionManager; }), {
         isGroupJid: (jid: string) => jid.endsWith('@g.us')
     })
 }));
 
 vi.mock('../../src/services/whatsapp.service.ts', () => ({
-    WhatsAppService: vi.fn(() => mocks.whatsappService)
+    WhatsAppService: vi.fn(function () { return mocks.whatsappService; })
 }));
 
 vi.mock('../../src/services/recents.service.ts', () => ({
-    RecentsService: vi.fn(() => mocks.recentsService)
+    RecentsService: vi.fn(function () { return mocks.recentsService; })
 }));
 
 vi.mock('../../src/services/audio.service.ts', () => ({
-    AudioService: vi.fn(() => ({}))
+    AudioService: vi.fn(function () { return {}; })
 }));
 
 vi.mock('../../src/ui/menu.handler.ts', () => ({
-    MenuHandler: vi.fn(() => mocks.menuHandler)
+    MenuHandler: vi.fn(function () { return mocks.menuHandler; })
 }));
 
 vi.mock('../../src/services/incoming-message.resolver.ts', () => ({
@@ -91,7 +91,7 @@ vi.mock('../../src/services/incoming-message.resolver.ts', () => ({
 }));
 
 vi.mock('../../src/services/incoming-media.service.ts', () => ({
-    IncomingMediaService: vi.fn(() => mocks.incomingMediaService)
+    IncomingMediaService: vi.fn(function () { return mocks.incomingMediaService; })
 }));
 
 type PiHandler = (event: any, ctx: any) => Promise<void>;

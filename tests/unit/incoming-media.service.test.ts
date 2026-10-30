@@ -18,9 +18,9 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 vi.mock('@llamaindex/liteparse', () => ({
-    LiteParse: vi.fn(() => ({
-        parse: mocks.pdfParse
-    }))
+    LiteParse: vi.fn(function () {
+        return { parse: mocks.pdfParse };
+    })
 }));
 
 const streamFrom = async function* (chunks: Buffer[]) {
