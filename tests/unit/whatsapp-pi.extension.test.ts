@@ -31,7 +31,8 @@ const mocks = vi.hoisted(() => {
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
         getLastRemoteJid: vi.fn().mockReturnValue('5511999998888@s.whatsapp.net'),
         markRead: vi.fn(),
-        sendPresence: vi.fn().mockResolvedValue(undefined)
+        sendPresence: vi.fn().mockResolvedValue(undefined),
+        setMessageReaction: vi.fn().mockResolvedValue(undefined)
     });
 
     const createRecentsService = () => ({

@@ -209,6 +209,7 @@ export default function (pi: ExtensionAPI) {
 
     // Track whether send_wa_message tool already sent a reply this turn
     let toolSentToJid: string | null = null;
+    let processingReactionKey: { remoteJid: string; id: string; fromMe: boolean; participant?: string } | null = null;
 
     const toRecentSenderNumber = (recipientJid: string): string => {
         if (recipientJid.endsWith('@g.us')) {
@@ -263,6 +264,8 @@ export default function (pi: ExtensionAPI) {
         if (remoteJid && msg.key.id) {
             whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
             whatsappService.sendPresence(remoteJid, 'composing');
+            processingReactionKey = { remoteJid, id: msg.key.id, fromMe: Boolean(msg.key.fromMe), participant: msg.key.participant };
+            void whatsappService.setMessageReaction(processingReactionKey, '⏳');
         }
 
         // Reset tool-sent flag for this new incoming message
@@ -558,6 +561,10 @@ export default function (pi: ExtensionAPI) {
         const { message } = event;
         // Only reply if it's the assistant and we have a valid target
         if (message.role === "assistant") {
+            if (processingReactionKey) {
+                await whatsappService.setMessageReaction(processingReactionKey, '');
+                processingReactionKey = null;
+            }
             const lastJid = whatsappService.getLastRemoteJid();
             const text = message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
             const outboundJid = lastJid

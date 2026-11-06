@@ -109,7 +109,7 @@ interface WhatsAppSocketLike {
     };
     end(reason?: unknown): void;
     logout(): Promise<void>;
-    sendMessage(jid: string, content: { text: string }): Promise<SentMessageLike | undefined>;
+    sendMessage(jid: string, content: { text: string } | { react: { text: string; key: { remoteJid: string; id: string; fromMe: boolean; participant?: string } } }): Promise<SentMessageLike | undefined>;
     sendPresenceUpdate(presence: 'composing' | 'recording' | 'paused', jid: string): Promise<void>;
     readMessages(messages: Array<{ remoteJid: string; id: string; fromMe: boolean }>): Promise<void>;
     groupMetadata(jid: string): Promise<{ id: string; subject: string; participants: Array<{ id: string }> }>;
@@ -902,6 +902,16 @@ export class WhatsAppService {
             if (this.verboseMode) {
                 console.error(t('service.whatsapp.failedPresenceUpdate', { jid }), error);
             }
+        }
+    }
+
+    async setMessageReaction(key: { remoteJid: string; id: string; fromMe: boolean; participant?: string }, emoji: string) {
+        const socket = this.getActiveSocket();
+        if (!socket) return;
+        try {
+            await socket.sendMessage(key.remoteJid, { react: { text: emoji, key } });
+        } catch (error) {
+            if (this.verboseMode) console.error('Failed to update WhatsApp processing reaction', error);
         }
     }
 
