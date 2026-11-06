@@ -265,7 +265,7 @@ export default function (pi: ExtensionAPI) {
             whatsappService.markRead(remoteJid, msg.key.id, msg.key.fromMe);
             whatsappService.sendPresence(remoteJid, 'composing');
             processingReactionKey = { remoteJid, id: msg.key.id, fromMe: Boolean(msg.key.fromMe), participant: msg.key.participant };
-            void whatsappService.setMessageReaction(processingReactionKey, '⏳');
+            void whatsappService.setMessageReaction(processingReactionKey, '✅');
         }
 
         // Reset tool-sent flag for this new incoming message
