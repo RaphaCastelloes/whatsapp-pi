@@ -742,6 +742,12 @@ export class WhatsAppService {
         const text = this.extractText(message.message);
         if (this.isPiGeneratedMessage(text)) return;
 
+        // Baileys emits reaction changes as message upserts. These are events
+        // about an existing message, not new prompts; forwarding them causes
+        // Pi's own processing reaction to loop back into the TUI.
+        const resolved = extractIncomingText(message.message, this.recentsService);
+        if (resolved.kind === 'reaction') return;
+
         const remoteJid = message.key.remoteJid;
         const isGroup = remoteJid.endsWith('@g.us');
 
@@ -761,7 +767,6 @@ export class WhatsAppService {
             : this.normalizeContactNumber(remoteJid.split('@')[0]);
         
         // Process the message with full context (including reaction lookup)
-        const resolved = extractIncomingText(message.message, this.recentsService);
         const displayText = resolved.text;
         
         void this.recordIncomingMessage(message, remoteJid, displayText);
