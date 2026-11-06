@@ -32,7 +32,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@llamaindex/liteparse": "^2.17.0",
+    "@llamaindex/liteparse": "^2.18.0",
     "baileys": "^7.0.0-rc14",
     "ffmpeg-static": "^5.3.0",
     "pino": "^10.3.1",
@@ -40,9 +40,9 @@
     "whisper-cpp-node": "^0.2.12"
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.27.10",
     "@eslint/js": "^9.39.4",
     "@mariozechner/pi-coding-agent": "^0.49.3",
+    "@sinclair/typebox": "^0.27.10",
     "@types/node": "^20.11.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@typescript-eslint/eslint-plugin": "^8.58.1",
