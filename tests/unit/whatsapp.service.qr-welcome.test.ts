@@ -40,7 +40,8 @@ const baileysMocks = vi.hoisted(() => {
     };
 });
 
-vi.mock('baileys', () => ({
+vi.mock('baileys', async importOriginal => ({
+    ...await importOriginal<typeof import('baileys')>(),
     makeWASocket: baileysMocks.makeWASocket,
     fetchLatestBaileysVersion: baileysMocks.fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore: baileysMocks.makeCacheableSignalKeyStore,
@@ -99,7 +100,8 @@ describe('WhatsAppService QR welcome message', () => {
         expect(socket.sendMessage).toHaveBeenCalledOnce();
         expect(socket.sendMessage).toHaveBeenCalledWith(
             SELF_JID_NORMALIZED,
-            expect.objectContaining({ text: expect.stringContaining('Send me a message') })
+            expect.objectContaining({ text: expect.stringContaining('Send me a message') }),
+            { messageId: expect.any(String) }
         );
 
         await service.stop();
@@ -138,10 +140,83 @@ describe('WhatsAppService QR welcome message', () => {
         const config = baileysMocks.makeWASocket.mock.calls[0][0];
         expect(config.version).toBeUndefined();
         expect(baileysMocks.fetchLatestBaileysVersion).not.toHaveBeenCalled();
-        await expect(config.getMessage({ id: 'MSG123' })).resolves.toBe(sentMessage);
-        await expect(config.getMessage({ id: 'MSG123', fromMe: false })).resolves.toBeUndefined();
+        await expect(config.getMessage({ remoteJid: SELF_JID_NORMALIZED, id: 'MSG123', fromMe: true })).resolves.toBe(sentMessage);
+        await expect(config.getMessage({ remoteJid: SELF_JID_NORMALIZED, id: 'MSG123', fromMe: false })).resolves.toBeUndefined();
+        await expect(config.getMessage({ remoteJid: '15550000002@s.whatsapp.net', id: 'MSG123' })).resolves.toBeUndefined();
         await expect(config.getMessage({ id: 'unknown' })).resolves.toBeUndefined();
 
+        await service.stop();
+    });
+
+    it.each(['5511999998888@s.whatsapp.net', '120363012345@g.us'])('resolves receipt-shaped outgoing retries for %s without confusing the requester with the author', async jid => {
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
+        const service = new WhatsAppService(createSessionManager() as any);
+        const content = { conversation: 'retained outgoing' };
+        await service.start();
+        const socket = baileysMocks.sockets[0];
+        await socket.handlers.get('connection.update')!({ connection: 'open' });
+        service.cacheSentMessage('retry', content, {
+            remoteJid: jid, fromMe: true,
+            ...(jid.endsWith('@g.us') ? { participant: SELF_JID_NORMALIZED } : {})
+        });
+        const getMessage = baileysMocks.makeWASocket.mock.calls[0][0].getMessage;
+        const retry = { remoteJid: jid, id: 'retry', fromMe: true, participant: '15550000002:1@s.whatsapp.net' };
+        await expect(getMessage(retry)).resolves.toBe(content);
+        await expect(getMessage({ ...retry, fromMe: false })).resolves.toBeUndefined();
+        await expect(getMessage({ ...retry, remoteJid: '15550000003@s.whatsapp.net' })).resolves.toBeUndefined();
+        expect(service.findMessageKey(jid, 'retry', { fromMe: true, participant: retry.participant })).toBeUndefined();
+        socket.user.id = '15550000004@s.whatsapp.net';
+        await socket.handlers.get('connection.update')!({ connection: 'open' });
+        await expect(getMessage(retry)).resolves.toBeUndefined();
+        await service.stop();
+    });
+
+    it('ignores old-socket callbacks and retry hooks after a new account connects', async () => {
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
+        const service = new WhatsAppService(createSessionManager() as any);
+        const callback = vi.fn();
+        service.setMessageCallback(callback);
+        await service.start();
+        const oldSocket = baileysMocks.sockets[0];
+        const oldConfig = baileysMocks.makeWASocket.mock.calls[0][0];
+        await oldSocket.handlers.get('connection.update')!({ connection: 'open' });
+        await service.start();
+        const currentSocket = baileysMocks.sockets[1];
+        currentSocket.user.id = '15559999992@s.whatsapp.net';
+        await currentSocket.handlers.get('connection.update')!({ connection: 'open' });
+        service.cacheSentMessage('same-id', { conversation: 'new account' }, { remoteJid: SELF_JID_NORMALIZED, fromMe: true });
+        const retry = { remoteJid: SELF_JID_NORMALIZED, id: 'same-id', fromMe: true };
+        await expect(oldConfig.getMessage(retry)).resolves.toBeUndefined();
+        const currentConfig = baileysMocks.makeWASocket.mock.calls[1][0];
+        await expect(currentConfig.getMessage(retry)).resolves.toEqual({ conversation: 'new account' });
+        await oldSocket.handlers.get('lid-mapping.update')!({ lid: '999999999@lid', pn: SELF_JID_NORMALIZED });
+        expect(service.canonicalConversation('999999999@lid')).toBe('999999999@lid');
+        await oldSocket.handlers.get('messages.upsert')!({ type: 'notify', messages: [{ key: { remoteJid: SELF_JID_NORMALIZED, id: 'stale-input', fromMe: false }, message: { conversation: 'old account' } }] });
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(callback).not.toHaveBeenCalled();
+        await service.stop();
+    });
+
+    it('preserves the observed top-level author when caching an outgoing group reaction target', async () => {
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
+        const { ReactionSender } = await import('../../src/services/reaction.sender.ts');
+        const service = new WhatsAppService(createSessionManager() as any);
+        const jid = '120363012345@g.us';
+        await service.start();
+        const socket = baileysMocks.sockets[0];
+        await socket.handlers.get('connection.update')!({ connection: 'open' });
+        socket.groupMetadata.mockResolvedValue({ id: jid, subject: 'Group', participants: [] });
+        socket.sendMessage.mockResolvedValueOnce({
+            key: { remoteJid: jid, id: 'outgoing-group', fromMe: true },
+            participant: SELF_JID_NORMALIZED, message: { conversation: 'Group text' }
+        });
+        await service.sendMessage(jid, 'Group text');
+        socket.sendMessage.mockResolvedValueOnce({ key: { id: 'reaction' } });
+        const reaction = new ReactionSender(socket, options => service.findMessageKey(options.jid, options.messageId, { fromMe: options.fromMe }));
+        await expect(reaction.sendReaction({ jid, messageId: 'outgoing-group', fromMe: true, emoji: '👍' })).resolves.toMatchObject({ success: true });
+        expect(socket.sendMessage).toHaveBeenLastCalledWith(jid, {
+            react: { text: '👍', key: { remoteJid: jid, id: 'outgoing-group', fromMe: true, participant: SELF_JID_NORMALIZED } }
+        });
         await service.stop();
     });
 
@@ -155,14 +230,14 @@ describe('WhatsAppService QR welcome message', () => {
         await service.start();
         const config = baileysMocks.makeWASocket.mock.calls[0][0];
         for (let index = 0; index <= 500; index++) {
-            service.cacheSentMessage(`MSG${index}`, { conversation: `${index}` });
+            service.cacheSentMessage(`MSG${index}`, { conversation: `${index}` }, { remoteJid: SELF_JID_NORMALIZED, fromMe: true });
         }
 
-        await expect(config.getMessage({ id: 'MSG0' })).resolves.toBeUndefined();
-        await expect(config.getMessage({ id: 'MSG500' })).resolves.toEqual({ conversation: '500' });
+        await expect(config.getMessage({ remoteJid: SELF_JID_NORMALIZED, id: 'MSG0' })).resolves.toBeUndefined();
+        await expect(config.getMessage({ remoteJid: SELF_JID_NORMALIZED, id: 'MSG500' })).resolves.toEqual({ conversation: '500' });
 
         vi.setSystemTime(24 * 60 * 60 * 1000 + 1_001);
-        await expect(config.getMessage({ id: 'MSG500' })).resolves.toBeUndefined();
+        await expect(config.getMessage({ remoteJid: SELF_JID_NORMALIZED, id: 'MSG500' })).resolves.toBeUndefined();
 
         await service.stop();
     });

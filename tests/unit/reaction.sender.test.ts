@@ -106,13 +106,35 @@ describe('ReactionSender', () => {
         );
     });
 
+    it('preserves a full group target key, including own direction and participant', async () => {
+        const socket = { sendMessage: vi.fn().mockResolvedValue({ key: { id: 'sent' } }) };
+        const key = { remoteJid: '120363000000@g.us', id: 'original', fromMe: true, participant: 'self@lid', participantAlt: '15550000001@s.whatsapp.net' };
+        const sender = new ReactionSender(socket, () => key);
+        expect((await sender.sendReaction({ jid: key.remoteJid, messageId: key.id, emoji: '👍🏽' })).success).toBe(true);
+        expect(socket.sendMessage).toHaveBeenCalledWith(key.remoteJid, { react: { text: '👍🏽', key } });
+    });
+
+    it('does not guess unavailable or ambiguous targets', async () => {
+        const socket = { sendMessage: vi.fn() };
+        const sender = new ReactionSender(socket, () => undefined);
+        expect((await sender.sendReaction({ jid: '120363000000@g.us', messageId: 'missing', emoji: '👍' })).success).toBe(false);
+        expect(socket.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('rejects multiple emoji graphemes', async () => {
+        const socket = { sendMessage: vi.fn() };
+        const sender = new ReactionSender(socket);
+        expect((await sender.sendReaction({ jid: '123@s.whatsapp.net', messageId: 'id', emoji: '👍👍' })).success).toBe(false);
+        expect(socket.sendMessage).not.toHaveBeenCalled();
+    });
+
     it('validates various standard emojis', async () => {
         const mockSocket = {
             sendMessage: vi.fn().mockResolvedValue({ key: { id: 'reaction' } })
         };
         const sender = new ReactionSender(mockSocket as any);
 
-        const validEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏'];
+        const validEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏', '👨‍👩‍👧‍👦', '👍🏽', '🇦🇷', '1️⃣'];
 
         for (const emoji of validEmojis) {
             const result = await sender.sendReaction({

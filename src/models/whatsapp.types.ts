@@ -1,4 +1,19 @@
+import type { WAMessage, WAMessageKey, AnyMessageContent, MiscMessageGenerationOptions } from 'baileys';
+
 export type SessionStatus = 'logged-out' | 'pairing' | 'connected' | 'disconnected';
+
+export type IncomingProcessingState = 'reserved' | 'prepared' | 'handed-off' | 'consumed' | 'failed';
+
+export interface WhatsAppSessionContext {
+    readonly accountScope: string;
+    readonly generation: number;
+}
+
+export type IncomingMessageEnvelope = Pick<WAMessage, 'message' | 'pushName' | 'messageTimestamp'> & {
+    key: WAMessageKey & { id: string; remoteJid: string };
+    senderNumber: string;
+    sessionContext: WhatsAppSessionContext;
+};
 
 export interface WhatsAppSession {
     id: string;
@@ -19,6 +34,7 @@ export interface QuotedMessageInfo {
 export interface IncomingMessage {
     id: string;
     remoteJid: string;
+    senderNumber?: string;
     pushName?: string;
     text?: string;
     timestamp: number;
@@ -28,7 +44,11 @@ export interface IncomingMessage {
 export interface MessageRequest {
     recipientJid: string;
     text: string;
+    content?: AnyMessageContent;
+    sendOptions?: MiscMessageGenerationOptions;
+    sessionContext?: WhatsAppSessionContext;
     options?: {
+        brand?: boolean;
         maxRetries?: number;
         priority?: 'high' | 'normal';
     };
@@ -36,6 +56,7 @@ export interface MessageRequest {
 
 export interface MessageResult {
     success: boolean;
+    delivery?: 'unknown';
     messageId?: string;
     error?: string;
     attempts: number;

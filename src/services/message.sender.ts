@@ -1,8 +1,9 @@
 import { WhatsAppService } from './whatsapp.service.js';
-import { MessageRequest, MessageResult, WhatsAppError } from '../models/whatsapp.types.js';
+import { MessageRequest, MessageResult, WhatsAppError, type WhatsAppSessionContext } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
 import { appendFileSync } from 'fs';
 import { createStoragePaths } from './storage-path.js';
+import { generateMessageIDV2 } from 'baileys';
 
 const LOG_FILE = createStoragePaths().logPath;
 function fileLog(msg: string) {
@@ -31,9 +32,16 @@ export class MessageSender {
      * @param timeoutMs Maximum time to wait in milliseconds.
      * @throws {WhatsAppError} If connection is not established within timeout.
      */
-    private async waitIfOffline(timeoutMs: number = 30000): Promise<void> {
+    private assertCurrentSession(context: WhatsAppSessionContext): void {
+        if (!this.whatsappService.isSessionContextCurrent(context)) {
+            throw new WhatsAppError('SESSION_CHANGED', t('message.sender.sessionChanged'));
+        }
+    }
+
+    private async waitIfOffline(context: WhatsAppSessionContext, timeoutMs: number = 30000): Promise<void> {
         const start = Date.now();
         while (this.whatsappService.getStatus() !== 'connected') {
+            this.assertCurrentSession(context);
             if (Date.now() - start > timeoutMs) {
                 throw new WhatsAppError('TIMEOUT', t('message.sender.timeout'));
             }
@@ -47,18 +55,24 @@ export class MessageSender {
      * @returns Promise resolving to a result object indicating success or failure.
      */
     public async send(request: MessageRequest): Promise<MessageResult> {
+        const context = request.sessionContext ?? this.whatsappService.getSessionContext();
         const isGroup = request.recipientJid.endsWith('@g.us');
         // Groups need more retries because the first send bootstraps
         // the Signal sender-key session (causes "No sessions" on first attempts)
-        const maxRetries = isGroup ? 5 : (request.options?.maxRetries ?? 3);
+        const maxRetries = request.options?.maxRetries ?? (isGroup ? 5 : 3);
+        const messageId = request.sendOptions?.messageId ?? generateMessageIDV2();
+        const content = request.content ?? { text: request.options?.brand === false ? request.text : `${request.text} π` };
         let attempts = 0;
         let lastError: unknown = null;
 
         while (attempts < maxRetries) {
             attempts++;
+            let transmissionStarted = false;
             try {
                 // 1. Ensure we are online
-                await this.waitIfOffline();
+                this.assertCurrentSession(context);
+                await this.waitIfOffline(context);
+                this.assertCurrentSession(context);
                 
                 // 2. Get active socket
                 const socket = this.whatsappService.getSocket();
@@ -71,12 +85,23 @@ export class MessageSender {
                     await this.whatsappService.prepareGroupSession(request.recipientJid);
                 }
 
+                this.assertCurrentSession(context);
+                if (socket !== this.whatsappService.getSocket()) {
+                    throw new WhatsAppError('SOCKET_NOT_INIT', t('message.sender.socketNotInitialized'));
+                }
+
                 // 4. Send the message
                 // Note: Branding π is applied here to ensure consistency
-                const response = await socket.sendMessage(request.recipientJid, { 
-                    text: `${request.text} π` 
+                this.whatsappService.registerOutgoing(request.recipientJid, messageId);
+                transmissionStarted = true;
+                const response = await socket.sendMessage(request.recipientJid, content, { ...request.sendOptions, messageId });
+                if (!this.whatsappService.isSessionContextCurrent(context) || !response?.key?.id) {
+                    return { success: false, delivery: 'unknown', messageId, error: t('message.sender.deliveryUnknown'), attempts };
+                }
+                this.whatsappService.cacheSentMessage(response.key.id, response.message, {
+                    ...response.key, remoteJid: request.recipientJid, fromMe: true,
+                    ...(isGroup ? { participant: response.key.participant ?? response.participant } : {})
                 });
-                this.whatsappService.cacheSentMessage(response?.key?.id, response?.message);
 
                 fileLog(`SUCCESS sending to ${request.recipientJid} on attempt ${attempts}`);
                 return {
@@ -92,10 +117,13 @@ export class MessageSender {
                     error: error instanceof Error ? error.message : String(error)
                 }));
                 
-                // Specific handling for non-retryable errors
-                if (error instanceof WhatsAppError && error.code === 'TIMEOUT') {
-                    break;
+                const message = error instanceof Error ? error.message : String(error);
+                const statusCode = (error as { output?: { statusCode?: number } } | null)?.output?.statusCode;
+                const nonRetryable = statusCode === 400 || statusCode === 401 || statusCode === 403;
+                if (transmissionStarted && !message.includes('No sessions') && !nonRetryable) {
+                    return { success: false, delivery: 'unknown', messageId, error: message, attempts };
                 }
+                if (nonRetryable || (error instanceof WhatsAppError && (error.code === 'TIMEOUT' || error.code === 'SESSION_CHANGED'))) break;
 
                 // 5. Backoff before retry
                 if (attempts < maxRetries) {

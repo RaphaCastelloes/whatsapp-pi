@@ -14,7 +14,7 @@ WhatsApp-Pi connects [Pi Coding Agent](https://pi.dev) to WhatsApp. Chat with yo
 - Pair a WhatsApp account with a QR code; credentials persist locally.
 - Choose which contacts and groups can trigger the agent. Manage numbers, aliases, and group JIDs in Pi’s `/whatsapp` menu.
 - Browse recents and message history, then reply from the TUI.
-- Send WhatsApp messages and reactions with Pi tools.
+- Send WhatsApp messages and reactions with Pi tools. Sending is connection-aware, with stable message IDs, bounded pre-transmission retries, and explicit uncertain outcomes.
 - Process incoming images for vision, transcribe voice notes locally with Whisper.cpp, and download documents for agent access. PDFs get a bounded text preview when readable.
 - Optionally bind an agent instance to one group with `--whatsapp-group <jid>`.
 
@@ -78,12 +78,30 @@ Run `/whatsapp` to manage the connection and allowed chats:
 
 WhatsApp chat commands `/compact` and `/abort` compact the current Pi context and abort the current Pi operation, respectively.
 
+## Trusted chats and reply routing
+
+All allowed chats share the **same Pi model context**. Allow only mutually trusted people/groups; correct reply routing is not conversation privacy isolation.
+
+Incoming prompts include an opaque request marker. It identifies an exact extension-submitted input in a bounded, memory-only registry; it is not a routing command. Pi's normal user-input policies still run. Ownership activates only when matching content is consumed, not when a chat message arrives.
+
+Automatic replies wait until tool results are available. They never reuse a stale WhatsApp destination for terminal-only work. Combined inputs from different chats, unknown input, or policy/runtime-transformed content (including changed image bytes) fail closed: an agent must use an explicit known recipient rather than guess. Verified PN/LID aliases do not replace the original transport address of a reply.
+
+An admitted batch and its pending preparation retain an account/auth scope and session generation. Account changes, logout or explicit stop discard stale unsubmitted work rather than submitting it through a new account. Same-account reconnects preserve admitted batch work; mapping results and callbacks from obsolete sockets are ignored. These guards do not recall a send that has already started.
+
+Every eligible batch item is considered. History/append events and request-ID-bearing resends do not trigger ordinary agent work. A delayed normal `notify` event without a request ID can still trigger work. Replay protection is bounded to 5,000 entries/24 hours in the running process; eviction/restart ends that protection. There is no durable agent-job replay, and a crash during handoff can lose a request. Retry manually by sending a fresh WhatsApp message, not by automatically resending an uncertain outbound send.
+
+Ordinary incoming text ending in `π` is accepted. The legacy branding filter applies only to own-direction messages; registered outgoing IDs provide additional echo protection.
+
+Full message keys and permitted raw content are cached in memory for at most 500 messages/24 hours, or earlier protocol expiry. Reactions require an unambiguous retained target; optional `fromMe`/`participant` hints disambiguate stored keys. Missing targets return an error rather than inventing a group participant or message direction. View-once payloads are excluded from this new cache; these limits do not erase existing Pi transcripts, logs, or downloaded media.
+
+A successful socket send means **accepted**, not delivered/read by the recipient. An undefined result or transport failure after transmission starts returns `delivery: "unknown"` with the stable message ID when available. Do not resend automatically; the first send may still arrive.
+
 ## Pi tools
 
 | Tool | Purpose |
 | --- | --- |
-| `send_wa_message` | Send a message. Omit `jid` to reply to the active/last WhatsApp conversation; provide a known JID for another recipient. |
-| `send_reaction` | React to a WhatsApp message with an emoji. |
+| `send_wa_message` | Send text to a known recipient, or omit `jid` for the uniquely owned current conversation. Idle manual calls retain last-conversation/operator fallback. |
+| `send_reaction` | React to a retained, unambiguous message key; optional `fromMe`/`participant` hints and compound emoji are supported. |
 | `list_wa_conversations` | Read recent conversation summaries, with filters for incoming and allowed chats. |
 | `get_wa_conversation_history` | Read recent messages for a sender number or JID. |
 | `check_wa_new_messages` | Find conversations whose latest message is incoming, optionally since a timestamp. |
