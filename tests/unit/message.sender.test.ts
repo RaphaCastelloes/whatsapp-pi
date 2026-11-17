@@ -11,7 +11,8 @@ describe('MessageSender', () => {
         isVerbose: vi.fn(),
         prepareGroupSession: vi.fn().mockResolvedValue(undefined),
         cacheSentMessage: vi.fn(),
-        registerOutgoing: vi.fn()
+        registerOutgoing: vi.fn(),
+        recordSendOutcome: vi.fn()
     };
 
     beforeEach(() => {
@@ -124,6 +125,55 @@ describe('MessageSender', () => {
         whatsappService.getSocket.mockReturnValue({ sendMessage: vi.fn().mockResolvedValue(undefined) });
         const result = await new MessageSender(whatsappService as any).send({ recipientJid: '5511999998888@s.whatsapp.net', text: 'hello' });
         expect(result).toMatchObject({ success: false, delivery: 'unknown', attempts: 1 });
+    });
+
+    it('pre-send abort makes no socket call and settles owned resources once', async () => {
+        const abort = new AbortController();
+        abort.abort();
+        const onSettled = vi.fn();
+        const sendMessage = vi.fn();
+        whatsappService.getSocket.mockReturnValue({ sendMessage });
+        const result = await new MessageSender(whatsappService as any).send({ recipientJid: '15550000001@s.whatsapp.net', text: 'test', signal: abort.signal, onSettled });
+        expect(result.success).toBe(false);
+        expect(result.delivery).toBeUndefined();
+        expect(sendMessage).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+    });
+
+    it('returns unknown on in-flight abort but waits for transport before settling resources', async () => {
+        let complete!: (response: { key: { id: string }; message: { conversation: string } }) => void;
+        let started!: () => void;
+        const began = new Promise<void>(resolve => { started = resolve; });
+        const sendMessage = vi.fn(() => { started(); return new Promise(resolve => { complete = resolve; }); });
+        whatsappService.getSocket.mockReturnValue({ sendMessage });
+        const abort = new AbortController();
+        const onSettled = vi.fn();
+        const pending = new MessageSender(whatsappService as any).send({ recipientJid: '15550000001@s.whatsapp.net', text: 'test', signal: abort.signal, onSettled });
+        await began;
+        abort.abort();
+        expect(await pending).toMatchObject({ success: false, delivery: 'unknown', messageId: expect.any(String) });
+        expect(onSettled).not.toHaveBeenCalled();
+        complete({ key: { id: 'accepted' }, message: { conversation: 'test π' } });
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ success: true, messageId: 'accepted' })));
+        expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    it('times out caller waiting during upload without releasing resources or retrying a possibly sent message', async () => {
+        vi.useFakeTimers();
+        try {
+            let finish!: (response: { key: { id: string }; message: { conversation: string } }) => void;
+            const sendMessage = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+            whatsappService.getSocket.mockReturnValue({ sendMessage });
+            const onSettled = vi.fn();
+            const pending = new MessageSender(whatsappService as any).send({ recipientJid: '15550000001@s.whatsapp.net', text: 'test', sendTimeoutMs: 20, onSettled });
+            await vi.advanceTimersByTimeAsync(21);
+            expect(await pending).toMatchObject({ success: false, delivery: 'unknown' });
+            expect(onSettled).not.toHaveBeenCalled();
+            finish({ key: { id: 'late' }, message: { conversation: 'test π' } });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+            expect(sendMessage).toHaveBeenCalledOnce();
+        } finally { vi.useRealTimers(); }
     });
 
     it('logs retry delay when send fails', async () => {

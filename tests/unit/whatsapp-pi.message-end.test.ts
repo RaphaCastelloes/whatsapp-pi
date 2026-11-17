@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
         sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 }),
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
         canonicalConversation: vi.fn((jid: string) => jid),
+        getQuotedMessage: vi.fn(),
         getAccountScope: vi.fn().mockReturnValue('fixture-account'),
         getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
         isSessionContextCurrent: vi.fn().mockReturnValue(true),

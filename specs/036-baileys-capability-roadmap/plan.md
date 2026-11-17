@@ -10,7 +10,39 @@ deepened: 2026-10-21
 # Implementation Plan: Baileys Capability Roadmap
 
 **Feature**: `036-baileys-capability-roadmap` | **Spec**: [spec.md](spec.md) | **Tasks**: [tasks.md](tasks.md)
-**Implementation status**: Phase 1 (U1–U4) implemented and locally validated. Phases 2–3 are not started or authorized.
+**Implementation status**: Phases 1–2 (U1–U7) implemented and validated. Phase 2 is on `feat/baileys-everyday-usefulness`, based on `948f539`; the fork owner subsequently authorized committing, pushing to the fork and opening an upstream PR dependent on Phase 1 PR #14. This is publication approval, not upstream maintainer approval. Phase 3 is not started or authorized.
+
+### Phase 2 execution and validation
+
+- The fork owner authorized Phase 2, an independent `openai-codex/gpt-6.1-sol` review and live sends to an explicitly designated test recipient. User-selected branch separation keeps the Phase 1 upstream PR unchanged.
+- U5 adds explicit media sending with approved-root/credential checks, bounded owned snapshots, metadata-only tool results and shared stable-ID transport. Caller interruption after transmission is unknown; ownership and cleanup persist until the transport settles.
+- U6 adds native scoped quotes to text/media tools and the existing reply UI. Quotes preserve observed transport addresses, revalidate retained targets before send, reject missing/deleted/expired/ambiguous/cross-chat payloads and record the quote ID. Minimal raw-cache deletion invalidation supports quote safety; full lifecycle fidelity remains Phase 3.
+- U7 adds audio/PTT/video, shared existing FFmpeg executable resolution, compatible pass-through and bounded codec conversion. Child abort/timeout waits for exit; converted size is checked. No new dependencies, package upgrades, TTS or remote fetching.
+- Final isolated validation: `npm test` — **345 passed across 34 files**; `npm run lint` — passed; `npm run typecheck` — passed; `git diff --check` — passed. Test commands used temporary `HOME` and `PI_CODING_AGENT_DIR`. No build script is declared. Real FFmpeg codec and native Baileys contract cases ran on this host, not just fake sockets.
+- Isolated startup: `pi --mode rpc --no-session --no-extensions --no-skills --no-prompt-templates --no-themes -e ./whatsapp-pi.ts` returned a successful `get_state` response without credentials/auto-connect. An active LSP error probe reported zero errors; eight silent-on-clean paths were unconfirmed, so the successful declared typecheck is the authoritative project check.
+
+#### Phase 2 independent review
+
+The requested **`openai-codex/gpt-6.1-sol`** read-only reviewer inspected the candidate and performed a focused re-review after fixes. Runtime status confirmed the explicit model override despite a different configured reviewer default. The reviewer could inspect source/tests but could not execute commands. All validation commands below are parent-run evidence, not independently rerun tests.
+
+| Finding | Correction and regression evidence |
+|---|---|
+| P1: Baileys recreates plaintext outside private snapshots | Supply bounded precomputed JPEG thumbnails and probed audio seconds; explicitly unavailable PTT waveform disables the native decoder. `native-media.contract.test.ts` runs actual `prepareWAMessageMedia` under child-process umask `022` and observes zero plaintext original copies for image/audio/PTT/video. |
+| P1: Native video thumbnails launch an unbounded child | Thumbnail creation uses the same bounded FFmpeg runner and preparation deadline. Native consumer instrumentation observes zero extra shell executions; thumbnail abort/timeout fixtures wait for child close before unlinking. |
+| P1: Ancestor replacement bypasses path checks | Compare pre-open regular-file identity and non-symlink ancestor identities with the opened descriptor/path, then repeat stability/ancestry checks after copying. Deterministic harmless outside-symlink replacement rejects before upload. This is not an OS sandbox. |
+| P1: A FIFO can block open indefinitely | Pre-check regular files, open with `O_NOFOLLOW`/`O_NONBLOCK` where supported and verify with `fstat`. Existing/replacement FIFO regressions reject promptly without leaving blocked filesystem work. |
+| P2: Own/LID native quote serialization not established | Actual native generation tests cover incoming/own direct and group cases. Own-LID group authors are explicitly unavailable because rc14 rewrites them to the account PN; incoming LID authors remain supported. |
+| P2: Tests stop before the native consumer | Added real native media/quote contract suites in addition to codec, tool, UI, delayed transport and delayed-child cleanup fixtures. |
+
+All reported defects were reproduced by failing regressions before correction. Focused independent re-review: **“No issues found”**, all six findings resolved, **“OK with notes”** about the remaining live-validation step. That live step was subsequently completed as follows.
+
+#### Authorized live WhatsApp validation
+
+The operator explicitly approved using the saved linked-device session, including potential takeover of an existing connection. A standalone harness exercised the repository's real `WhatsAppService`/`MessageSender`/`OutgoingMediaService` path against the designated recipient. It did not start an agent, upload business files, copy credentials, migrate auth, modify Pi settings, or log out. Harness status/allowlist handling was memory-only; normal Baileys credential refresh was retained. The harness disconnected afterward, and saved auth remained present.
+
+**11/11 sends were accepted**: text anchor, native quoted text, generated PDF, XLSX, Markdown, PNG, JPEG, MP3 audio, WAV-to-Opus voice note, compatible MP4 video and AVI-to-H.264 video. All 10 reply messages retained the native quote stanza ID in the actual returned protocol content. All fixtures were generated and non-sensitive. No uncertain send was automatically retried.
+
+Recipient receipt events were not captured; acceptance alone is not treated as delivery/read evidence. The operator checked the designated phone and explicitly confirmed **“All arrived and worked”**: files opened, audio/video played, and quoted replies displayed correctly. This is manual client-validation evidence, not instrumented read tracking. Live group rendering and every alternative codec/device remain untested; scoped/group behavior and failure cases have offline coverage. Public artifacts omit the recipient's number and credential/session contents.
 
 ### Phase 1 execution evidence
 
@@ -314,7 +346,7 @@ flowchart TB
 
 ### Phase 2: Everyday usefulness
 
-- [ ] U5. **Send documents and images explicitly**
+- [x] U5. **Send documents and images explicitly**
 
 **Goal / requirements**: Useful local artifacts through one validated media path; R5, R11.
 **Dependencies**: Phase 1 gate.
@@ -332,7 +364,7 @@ flowchart TB
 
 **Verification**: Document/image tool-to-socket fixtures pass; approved live-account checks later confirm native attachment rendering, without auto-connecting during development.
 
-- [ ] U6. **Send native quoted replies from tools and the reply UI**
+- [x] U6. **Send native quoted replies from tools and the reply UI**
 
 **Goal / requirements**: Actual same-conversation WhatsApp quotes, not a local-only reply draft; R6, R11.
 **Dependencies**: U5 and the U3 message store.
@@ -349,7 +381,7 @@ flowchart TB
 
 **Verification**: Reply UI → service → socket integration assertions prove a native quote option is present, not merely a displayed preview or unused draft ID.
 
-- [ ] U7. **Add audio, voice-note, and video sending**
+- [x] U7. **Add audio, voice-note, and video sending**
 
 **Goal / requirements**: Extend the same explicit media tool after documents/images/quotes are stable; R7, R11.
 **Dependencies**: U5, U6.
@@ -515,7 +547,7 @@ Before pressure/age eviction would remove a tombstone still protecting an otherw
 | 7. Cancellation guarantee impossible | Pre-send prevention vs post-send unknown; no blind retry; FFmpeg signal/timeout/exit ownership and delayed-cleanup tests. |
 | 8. History correlation/lifetime incomplete | Named Baileys correlation fields, import-only request-ID notify, interrupted persisted status on reconnect/restart, explicit quote-unavailable UI. |
 
-- U1–U10 remain unchanged stable unit IDs. T034 is added without renumbering T001–T033. All implementation tasks remain unchecked; T034 and per-phase validation have not been executed.
+- At the original planning-review checkpoint, U1–U10 remained stable and T034 was added without renumbering T001–T033. Execution status has since advanced as recorded above and in `tasks.md`; this historical record is not the current completion state.
 
 <!-- Phase 4: Optional expansion — comment only, no tasks or delivery commitment.
 Potential later work: mentions/polls; outbound edit/delete/forward/pin; stickers/GIFs/

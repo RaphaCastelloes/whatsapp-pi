@@ -15,7 +15,7 @@ export class MessageDetailView {
         const normalized = data.toLowerCase();
 
         if (normalized === 'r' || matchesKey(data, 'r')) {
-            void this.props.onReply?.();
+            if (this.props.quoteAvailable !== false) void this.props.onReply?.();
             return;
         }
 
@@ -37,6 +37,7 @@ export class MessageDetailView {
 
         const availableWidth = Math.max(20, width - 4);
         const rawHeaderLines = [
+            ...(this.props.quoteAvailable === false ? [t('quote.unavailable')] : []),
             `${t('message.detail.messageId')}: ${this.props.messageId}`,
             `${t('message.detail.from')}: ${this.formatSender()}`,
             `${t('message.detail.direction')}: ${this.formatDirection()} • ${t('message.detail.time')}: ${this.formatTimestamp(this.props.timestamp)}`
@@ -65,7 +66,7 @@ export class MessageDetailView {
         const separator = `├${'─'.repeat(boxWidth - 2)}┤`;
         const bottomBorder = `╰${'─'.repeat(boxWidth - 2)}╯`;
         const bodyLines = wrapTextWithAnsi(bodyText, wrapWidth).filter(line => line.length > 0 || bodyText.length === 0);
-        const exitHint = this.props.onReply
+        const exitHint = this.props.onReply && this.props.quoteAvailable !== false
             ? `\x1b[90m${t('message.detail.hint.replyOrClose')}\x1b[39m`
             : `\x1b[90m${t('message.detail.hint.close')}\x1b[39m`;
 
@@ -112,7 +113,7 @@ export async function showMessageDetailView(
         (_tui, _theme, _keybindings, done) => new MessageDetailView({
             ...props,
             onClose: () => done(undefined),
-            onReply: () => done('reply')
+            onReply: props.quoteAvailable === false ? undefined : () => done('reply')
         }),
         { overlay: true }
     );

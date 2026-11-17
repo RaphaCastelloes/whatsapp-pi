@@ -1,7 +1,7 @@
 # Tasks: Baileys Capability Roadmap
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md)
-**Status**: Phase 1 implemented, source-review findings corrected and locally validated (294 tests). Phases 2–3 remain unchecked and require separate authorization.
+**Status**: Phases 1–2 complete. Phase 2 passed 345 tests in 34 files, lint/typecheck, isolated startup, independent review/re-review, and 11 authorized live sends with operator-confirmed rendering/playback. Phase 3 remains unchecked and requires separate authorization.
 **Organization**: Exactly three delivery phases. U-IDs link to the detailed approach, file lists, test cases and verification in the plan. Tasks do not authorize commits, dependency upgrades, live-account operations or implementation before approval.
 
 ## Phase 1: Foundation — Blocking Prerequisites
@@ -45,22 +45,22 @@
 
 ### U5 — Documents and images first
 
-- [ ] T013 Add media validation/egress/size, pre-send abort vs post-send delivery-unknown, delayed transport cleanup, routing and result scenarios in `tests/unit/outgoing-media.service.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, `tests/unit/message.sender.test.ts`, and `tests/unit/whatsapp-pi.extension.test.ts`.
-- [ ] T014 Add local-file validation/preparation in `src/services/outgoing-media.service.ts`; connect media content to `src/services/message.sender.ts`, `src/services/whatsapp.service.ts`, and `src/models/whatsapp.types.ts`.
-- [ ] T015 Register additive `send_wa_media` document/image support in `whatsapp-pi.ts`; document supported inputs/limits and localize errors in `README.md` and `src/i18n.ts`.
+- [x] T013 Add media validation/egress/size, pre-send abort vs post-send delivery-unknown, delayed transport cleanup, routing and result scenarios in `tests/unit/outgoing-media.service.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, `tests/unit/message.sender.test.ts`, and `tests/unit/whatsapp-pi.extension.test.ts`.
+- [x] T014 Add local-file validation/preparation in `src/services/outgoing-media.service.ts`; connect media content to `src/services/message.sender.ts`, `src/services/whatsapp.service.ts`, and `src/models/whatsapp.types.ts`.
+- [x] T015 Register additive `send_wa_media` document/image support in `whatsapp-pi.ts`; document supported inputs/limits and localize errors in `README.md` and `src/i18n.ts`.
 
 ### U6 — Native quoted replies second
 
-- [ ] T016 Cover actual quote options, same-chat/full-key lookup, cancel/empty/missing/deleted/expired targets and compatibility in `tests/unit/message-reply.view.test.ts`, `tests/unit/message-detail.view.test.ts`, `tests/unit/send-wa-message.tool.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, and `tests/unit/message.sender.test.ts`.
-- [ ] T017 Add real stored-message quote targeting through `src/services/message.sender.ts`, `src/services/whatsapp.service.ts`, `src/services/message-store.service.ts`, `src/models/whatsapp.types.ts`, and `whatsapp-pi.ts`.
-- [ ] T018 Connect the existing reply/detail/menu flow to native quotes and explicit expired/evicted/unsupported quote-availability display in `src/ui/message-reply.view.ts`, `src/ui/message-detail.view.ts`, and `src/ui/menu.handler.ts`; document/localize live-process quote lifetime in `README.md` and `src/i18n.ts`.
+- [x] T016 Cover actual quote options, same-chat/full-key lookup, cancel/empty/missing/deleted/expired targets and compatibility in `tests/unit/message-reply.view.test.ts`, `tests/unit/message-detail.view.test.ts`, `tests/unit/send-wa-message.tool.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, and `tests/unit/message.sender.test.ts`.
+- [x] T017 Add real stored-message quote targeting through `src/services/message.sender.ts`, `src/services/whatsapp.service.ts`, `src/services/message-store.service.ts`, `src/models/whatsapp.types.ts`, and `whatsapp-pi.ts`.
+- [x] T018 Connect the existing reply/detail/menu flow to native quotes and explicit expired/evicted/unsupported quote-availability display in `src/ui/message-reply.view.ts`, `src/ui/message-detail.view.ts`, and `src/ui/menu.handler.ts`; document/localize live-process quote lifetime in `README.md` and `src/i18n.ts`.
 
 ### U7 — Audio, voice notes and video third
 
-- [ ] T019 Add compatible-input/conversion/MIME/voice-mode, timeout/signal/delayed-child-exit cleanup, post-send unknown outcomes, transport-lifetime ownership, size and shared-send scenarios in `tests/unit/outgoing-media.service.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, and `tests/unit/message.sender.test.ts`.
-- [ ] T020 Extend existing media preparation/tool choices using installed FFmpeg with signal/timeout/child-exit plumbing and Baileys upload timeout plus truthful in-flight uncertainty in `src/services/outgoing-media.service.ts`, `src/services/message.sender.ts`, `src/models/whatsapp.types.ts`, and `whatsapp-pi.ts`.
-- [ ] T021 Document supported formats, conversion/upload budgets and no-auto-upload behavior in `README.md`; add corresponding strings in `src/i18n.ts`.
-- [ ] T022 Complete the Phase 2 gate from `plan.md`: repository validation, isolated startup and every supported media/quote integration path. Request separate approval for live WhatsApp rendering/playback checks and report unrun checks honestly.
+- [x] T019 Add compatible-input/conversion/MIME/voice-mode, timeout/signal/delayed-child-exit cleanup, post-send unknown outcomes, transport-lifetime ownership, size and shared-send scenarios in `tests/unit/outgoing-media.service.test.ts`, `tests/unit/send-wa-media.tool.test.ts`, and `tests/unit/message.sender.test.ts`.
+- [x] T020 Extend existing media preparation/tool choices using installed FFmpeg with signal/timeout/child-exit plumbing and Baileys upload timeout plus truthful in-flight uncertainty in `src/services/outgoing-media.service.ts`, `src/services/message.sender.ts`, `src/models/whatsapp.types.ts`, and `whatsapp-pi.ts`.
+- [x] T021 Document supported formats, conversion/upload budgets and no-auto-upload behavior in `README.md`; add corresponding strings in `src/i18n.ts`.
+- [x] T022 Complete the Phase 2 gate from `plan.md`: repository validation, isolated startup and every supported media/quote integration path. Request separate approval for live WhatsApp rendering/playback checks and report unrun checks honestly.
 
 **Checkpoint**: U5 → U6 → U7 accepted in that order before Phase 3 migration work. Native quotes are bounded to messages retained by the running process until U8.
 

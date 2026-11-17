@@ -1,5 +1,6 @@
 import {
     makeWASocket,
+    extractMessageContent,
     generateMessageIDV2,
     DisconnectReason,
     makeCacheableSignalKeyStore,
@@ -13,7 +14,7 @@ import {
 } from 'baileys';
 import P from 'pino';
 import { SessionManager } from './session.manager.js';
-import { IncomingMessage, SessionStatus, type IncomingMessageEnvelope, type IncomingProcessingState, type WhatsAppSessionContext } from '../models/whatsapp.types.js';
+import { IncomingMessage, SessionStatus, type IncomingMessageEnvelope, type IncomingProcessingState, type WhatsAppSessionContext, type MessageRequest, type MessageResult, type QuoteTarget, type TextSendOptions } from '../models/whatsapp.types.js';
 import { MessageSender } from './message.sender.js';
 import { installBaileysConsoleFilter } from './baileys-console-filter.js';
 import { t } from '../i18n.js';
@@ -75,8 +76,9 @@ interface WhatsAppSocketLike {
         on(event: 'messages.upsert', handler: (payload: MessagesUpsertEvent) => void | Promise<void>): void;
         on(event: 'group-participants.update', handler: (payload: GroupParticipantsUpdateEvent) => void | Promise<void>): void;
         on(event: 'lid-mapping.update', handler: (payload: { lid: string; pn: string }) => void): void;
+        on(event: 'messages.delete', handler: (payload: { keys: WAMessageKey[] } | { jid: string; all: true }) => void): void;
         on(event: 'groups.update', handler: (payload: Array<{ id?: string }>) => void): void;
-        removeAllListeners(event: 'connection.update' | 'creds.update' | 'messages.upsert' | 'group-participants.update' | 'lid-mapping.update' | 'groups.update'): void;
+        removeAllListeners(event: 'connection.update' | 'creds.update' | 'messages.upsert' | 'group-participants.update' | 'lid-mapping.update' | 'groups.update' | 'messages.delete'): void;
     };
     signalRepository?: { lidMapping: { getPNForLID(lid: string): Promise<string | null> } };
     end(reason?: unknown): void;
@@ -176,6 +178,18 @@ export class WhatsAppService {
         this.messageStore.own({ remoteJid: jid, id, fromMe: true });
     }
 
+    public recordSendOutcome(jid: string, id: string, result: MessageResult): void {
+        this.messageStore.recordOutcome({ remoteJid: jid, id, fromMe: true }, result);
+    }
+
+    public getSendOutcome(jid: string, id: string): MessageResult | undefined {
+        return this.messageStore.getOutcome({ remoteJid: jid, id, fromMe: true });
+    }
+
+    public async sendContent(request: MessageRequest): Promise<MessageResult> {
+        return this.messageSender.send(request);
+    }
+
     public cacheSentMessage(id: string | null | undefined, message: proto.IMessage | null | undefined, key: WAMessageKey): void {
         if (!id || !message || !key.remoteJid) return;
         this.updateIdentityAccount();
@@ -186,6 +200,23 @@ export class WhatsAppService {
 
     public findMessageKey(jid: string, id: string, hint: WAMessageKey = {}): WAMessageKey | undefined {
         return this.messageStore.find(jid, id, hint)?.key;
+    }
+
+    public getQuotedMessage(jid: string, quote: QuoteTarget): WAMessage | undefined {
+        const canonical = this.jidResolver.canonical(jid);
+        if (!canonical || (quote.conversationJid && this.jidResolver.canonical(quote.conversationJid) !== canonical)) return undefined;
+        const record = this.messageStore.find(jid, quote.messageId, { fromMe: quote.fromMe, participant: quote.participant });
+        if (!record?.key.remoteJid || record.key.fromMe == null) return undefined;
+        if (record.key.remoteJid.endsWith('@g.us') && !record.key.participant) return undefined;
+        // Baileys rc14 rewrites own quoted authors to userJid (PN), losing an observed LID.
+        if (record.key.fromMe && record.key.participant?.endsWith('@lid')) return undefined;
+        const content = extractMessageContent(record.message);
+        if (!content || !['conversation', 'extendedTextMessage', 'imageMessage', 'documentMessage', 'audioMessage', 'videoMessage'].some(kind => Boolean(content[kind as keyof typeof content]))) return undefined;
+        return { key: { ...record.key }, message: record.message };
+    }
+
+    public invalidateMessage(key: WAMessageKey): void {
+        this.messageStore.remove(key);
     }
 
     public canonicalConversation(jid: string): string | undefined {
@@ -353,6 +384,7 @@ export class WhatsAppService {
         this.socket.ev.removeAllListeners('group-participants.update');
         this.socket.ev.removeAllListeners('lid-mapping.update');
         this.socket.ev.removeAllListeners('groups.update');
+        this.socket.ev.removeAllListeners('messages.delete');
 
         try {
             this.socket.end(undefined);
@@ -392,6 +424,11 @@ export class WhatsAppService {
             for (const update of updates) {
                 if (update.id) this.groupMetadataCache.delete(update.id);
             }
+        });
+        socket.ev.on('messages.delete', payload => {
+            if (socket !== this.socket || this.intentionalStop) return;
+            if ('keys' in payload) for (const key of payload.keys) this.invalidateMessage(key);
+            else this.invalidateMessage({ remoteJid: payload.jid });
         });
         socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
             if (socket !== this.socket || this.intentionalStop) return;
@@ -843,6 +880,8 @@ export class WhatsAppService {
         const isGroup = remoteJid.endsWith('@g.us');
         const senderNumber = this.jidResolver.senderNumber(remoteJid);
         if (!senderNumber) return;
+        const protocol = extractMessageContent(message.message)?.protocolMessage;
+        if (protocol?.type === proto.Message.ProtocolMessage.Type.REVOKE && protocol.key) this.invalidateMessage({ ...protocol.key, remoteJid });
         const resolved = extractIncomingText(message.message, this.recentsService);
         if (!this.sessionManager.isConversationAllowed(senderNumber)) {
             await this.recordIncomingMessage(message, remoteJid, resolved.text);
@@ -913,9 +952,11 @@ export class WhatsAppService {
         }
     }
 
-    async sendMessage(jid: string, text: string, preserveTransport = false) {
+    async sendMessage(jid: string, text: string, preserveTransport = false, options?: TextSendOptions) {
         const sessionContext = this.getSessionContext();
-        const recipientJid = preserveTransport ? jid : this.resolveOutboundRecipientJid(jid);
+        const quoted = options?.quote ? this.getQuotedMessage(jid, options.quote) : undefined;
+        if (options?.quote && !quoted) return { success: false, error: t('quote.unavailable'), attempts: 0 };
+        const recipientJid = quoted?.key.remoteJid ?? (preserveTransport ? jid : this.resolveOutboundRecipientJid(jid));
 
         // Ensure we show the typing indicator before sending
         await this.sendPresence(recipientJid, 'composing');
@@ -923,7 +964,8 @@ export class WhatsAppService {
         const result = await this.messageSender.send({
             recipientJid,
             text: text,
-            sessionContext
+            sessionContext,
+            ...options
         });
 
         // After sending, we can stop the typing indicator
@@ -936,9 +978,11 @@ export class WhatsAppService {
         return result;
     }
 
-    async sendMenuMessage(jid: string, text: string) {
+    async sendMenuMessage(jid: string, text: string, quote?: QuoteTarget) {
         const sessionContext = this.getSessionContext();
-        const normalizedJid = this.resolveOutboundRecipientJid(jid);
+        const quoted = quote ? this.getQuotedMessage(jid, quote) : undefined;
+        if (quote && !quoted) return { success: false, error: t('quote.unavailable'), attempts: 0 };
+        const normalizedJid = quoted?.key.remoteJid ?? this.resolveOutboundRecipientJid(jid);
         const socket = this.getActiveSocket();
 
         if (!socket) {
@@ -955,6 +999,7 @@ export class WhatsAppService {
                 recipientJid: normalizedJid,
                 text,
                 options: { brand: false, maxRetries: 1 },
+                quote,
                 sessionContext
             });
         } catch (error: unknown) {

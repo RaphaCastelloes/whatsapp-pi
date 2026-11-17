@@ -1,4 +1,5 @@
 import { extractMessageContent, toNumber, type WAMessage, type WAMessageKey, type proto } from 'baileys';
+import type { MessageResult } from '../models/whatsapp.types.js';
 import { JidResolver } from './jid-resolver.service.js';
 
 type MessageInput = Pick<WAMessage, 'key' | 'message' | 'messageTimestamp'>;
@@ -12,6 +13,7 @@ interface OwnedMessage {
     scope: string;
     key: WAMessageKey;
     expiresAt: number;
+    outcome?: MessageResult;
 }
 
 /** Memory-only protocol data. Persistent, sanitized records belong to Phase 3. */
@@ -66,12 +68,39 @@ export class MessageStore {
         return { ...match, key: { ...match.key } };
     }
 
+    public remove(key: WAMessageKey): void {
+        const chat = key.remoteJid ? this.resolver.canonical(key.remoteJid) : undefined;
+        if (!chat) return;
+        for (const [index, record] of this.messages) {
+            if (record.scope !== this.scope() || this.resolver.canonical(record.key.remoteJid ?? '') !== chat) continue;
+            if (key.id && record.key.id !== key.id) continue;
+            if (key.fromMe != null && record.key.fromMe !== key.fromMe) continue;
+            if (key.participant && this.resolver.canonical(record.key.participant ?? '') !== this.resolver.canonical(key.participant)) continue;
+            this.messages.delete(index);
+        }
+    }
+
     public own(key: WAMessageKey): void {
         this.prune();
         const index = this.ownedIndex(this.scope(), key);
         if (!index) return;
-        this.owned.set(index, { scope: this.scope(), key: { ...key }, expiresAt: Date.now() + this.ttlMs });
+        const previous = this.owned.get(index);
+        this.owned.set(index, { ...previous, scope: this.scope(), key: { ...key }, expiresAt: Date.now() + this.ttlMs });
         this.trim(this.owned);
+    }
+
+    public recordOutcome(key: WAMessageKey, outcome: MessageResult): void {
+        this.prune();
+        const index = this.ownedIndex(this.scope(), key);
+        const record = index ? this.owned.get(index) : undefined;
+        if (record) record.outcome = { ...outcome };
+    }
+
+    public getOutcome(key: WAMessageKey): MessageResult | undefined {
+        this.prune();
+        const index = this.ownedIndex(this.scope(), key);
+        const outcome = index ? this.owned.get(index)?.outcome : undefined;
+        return outcome ? { ...outcome } : undefined;
     }
 
     public isOwn(key: WAMessageKey): boolean {

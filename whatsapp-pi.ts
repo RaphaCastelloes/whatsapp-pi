@@ -12,7 +12,8 @@ import { ReactionSender } from './src/services/reaction.sender.js';
 import { initI18n, t } from './src/i18n.js';
 import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './src/services/conversation-router.service.js';
 import type { WAMessageKey } from 'baileys';
-import type { MessageResult } from './src/models/whatsapp.types.js';
+import type { MessageResult, QuoteTarget, TextSendOptions } from './src/models/whatsapp.types.js';
+import { OutgoingMediaService } from './src/services/outgoing-media.service.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -66,15 +67,13 @@ export default function (pi: ExtensionAPI) {
     pi.on('input', event => { router.observeInput(event); });
     pi.on('session_before_switch', () => { router.reset(); });
 
-    const sendWithOwnership = async (jid: string, text: string, snapshot: RoutingSnapshot | undefined): Promise<MessageResult> => {
+    const trackOwnedSend = async (jid: string, snapshot: RoutingSnapshot | undefined, send: () => Promise<MessageResult>): Promise<MessageResult> => {
         if (snapshot && snapshot.epoch.scope !== routingScope()) {
             return { success: false, error: t('message.sender.sessionChanged'), attempts: 0 };
         }
         const token = router.beginSend(snapshot, jid);
         try {
-            const result = snapshot?.target === jid
-                ? await whatsappService.sendMessage(jid, text, true)
-                : await whatsappService.sendMessage(jid, text);
+            const result = await send();
             router.finishSend(token, result);
             return result;
         } catch (error) {
@@ -82,6 +81,9 @@ export default function (pi: ExtensionAPI) {
             throw error;
         }
     };
+    const sendWithOwnership = (jid: string, text: string, snapshot: RoutingSnapshot | undefined, options?: TextSendOptions): Promise<MessageResult> => trackOwnedSend(jid, snapshot, () => options
+        ? whatsappService.sendMessage(jid, text, true, options)
+        : snapshot?.target === jid ? whatsappService.sendMessage(jid, text, true) : whatsappService.sendMessage(jid, text));
 
     const formatFooterStatus = (status: string) => {
         if (status !== t("service.whatsapp.connected")) {
@@ -353,16 +355,26 @@ export default function (pi: ExtensionAPI) {
         whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
     });
 
+    const quoteSchema = Type.Object({
+        messageId: Type.String({ minLength: 1 }),
+        conversationJid: Type.Optional(Type.String({ description: 'Original chat; must match the recipient.' })),
+        fromMe: Type.Optional(Type.Boolean()),
+        participant: Type.Optional(Type.String())
+    });
+    const quoteTarget = (input: Partial<QuoteTarget> | undefined): QuoteTarget | undefined => input
+        ? { ...input, messageId: input.messageId ?? '' } : undefined;
+
     // Register send_wa_message tool (LLM-callable)
     pi.registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
         description: "Send text to a known WhatsApp contact/group JID. If jid is omitted, uses the unique conversation owning the current turn. Ambiguous or terminal-only turns require an explicit JID; idle manual calls retain last-conversation/operator fallback.",
-        promptSnippet: "send_wa_message({message, jid?}) - Send a WhatsApp message. When replying to the current/last WhatsApp conversation, omit jid; do not reconstruct a JID from the displayed sender number. Only pass jid for an explicit different contact/group using a known real WhatsApp JID (e.g. 120363012345@g.us). IMPORTANT: After calling this tool, do NOT generate any follow-up text or confirmation — the message is already delivered to WhatsApp. Your entire response to the user should be sent ONLY through this tool, not repeated in chat.",
+        promptSnippet: "send_wa_message({message, jid?, quote?}) - Send text, optionally quoting a retained same-chat message by ID. Omit jid only for the uniquely owned current WhatsApp conversation; never reconstruct it from a displayed number. Acceptance is not proof of recipient delivery. Do not duplicate a successful or delivery-unknown send. Report definite pre-send errors; never retry an uncertain outcome automatically.",
         parameters: Type.Object({
             jid: Type.Optional(Type.String({ description: "WhatsApp JID of the recipient" })),
             recipient_jid: Type.Optional(Type.String({ description: "Alternative name for jid" })),
-            message: Type.String({ minLength: 1, description: "Plain-text message content to send" })
+            message: Type.String({ minLength: 1, description: "Plain-text message content to send" }),
+            quote: Type.Optional(quoteSchema)
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
             // Resolve JID: explicit jid/recipient_jid, unless it is a reconstructed
@@ -387,25 +399,94 @@ export default function (pi: ExtensionAPI) {
             const message = params.message ?? '';
 
             const snapshot = router.snapshot();
-            const outboundJid = snapshot?.target === resolvedJid
-                ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid);
-            const result = await sendWithOwnership(outboundJid, message, snapshot);
-
-            if (result.success) {
-                await recentsService.recordMessage({
-                    messageId: result.messageId!,
-                    senderNumber: toRecentSenderNumber(outboundJid),
-                    text: message,
-                    direction: 'outgoing',
-                    timestamp: Date.now()
+            const quote = quoteTarget(params.quote);
+            const quotedJid = quote ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
+            if (quote && !quotedJid) return { isError: true, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: t('quote.unavailable'), attempts: 0 }) }] };
+            const outboundJid = quotedJid ?? (snapshot?.target === resolvedJid
+                ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid));
+            const recordResult = async (outcome: MessageResult) => {
+                if (outcome.success) await recentsService.recordMessage({
+                    messageId: outcome.messageId!, senderNumber: toRecentSenderNumber(outboundJid),
+                    text: message, direction: 'outgoing', timestamp: Date.now(),
+                    ...(quote ? { quotedMessageId: quote.messageId } : {})
                 });
-            }
+            };
+            const options = quote || _signal ? { quote, signal: _signal, onSettled: recordResult } : undefined;
+            const result = await sendWithOwnership(outboundJid, message, snapshot, options);
+            if (!options) await recordResult(result);
 
             return {
                 isError: !result.success,
                 details: undefined,
                 content: [{ type: "text" as const, text: JSON.stringify({ success: result.success, messageId: result.messageId, error: result.error, attempts: result.attempts, delivery: result.delivery }) }]
             };
+        }
+    });
+
+    pi.registerTool({
+        name: 'send_wa_media',
+        label: t('media.toolLabel'),
+        description: t('media.toolDescription'),
+        promptSnippet: 'send_wa_media({path,type,jid?,caption?,voiceNote?,quote?}) - Explicit local attachment upload only. Mentioned paths are not upload instructions. Do not resend a delivery-unknown outcome; it may still arrive.',
+        parameters: Type.Object({
+            path: Type.String({ minLength: 1, description: 'Local file under the current workspace or WhatsApp media directory. No URLs or base64.' }),
+            type: Type.Union([Type.Literal('document'), Type.Literal('image'), Type.Literal('audio'), Type.Literal('video')]),
+            voiceNote: Type.Optional(Type.Boolean({ description: 'Audio only: send as an Ogg/Opus voice note rather than a normal audio attachment. Audio captions are not supported.' })),
+            jid: Type.Optional(Type.String({ description: 'Known recipient JID. Omit only for a uniquely owned WhatsApp turn.' })),
+            caption: Type.Optional(Type.String({ maxLength: 4096 })),
+            quote: Type.Optional(quoteSchema)
+        }),
+        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+            const mediaPath = params.path;
+            const mediaType = params.type;
+            const quote = quoteTarget(params.quote);
+            const snapshot = router.snapshot();
+            const resolvedJid = resolveToolRecipientJid(params);
+            const failed = (error: string) => ({ success: false, error, attempts: 0 });
+            const quotedJid = quote && resolvedJid ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
+            let result: MessageResult;
+            let metadata: Awaited<ReturnType<OutgoingMediaService['prepare']>>['metadata'] | undefined;
+            if (!mediaPath || !mediaType) result = failed(t('media.invalidPath'));
+            else if (!resolvedJid) result = failed(t('routing.destinationRequired'));
+            else if (whatsappService.getStatus() !== 'connected') result = failed(t('tool.error.notConnected'));
+            else if (quote && !quotedJid) result = failed(t('quote.unavailable'));
+            else {
+                const target = quotedJid ?? (snapshot?.target === resolvedJid ? resolvedJid : whatsappService.resolveOutboundRecipientJid(resolvedJid));
+                const sessionContext = whatsappService.getSessionContext();
+                result = await trackOwnedSend(target, snapshot, async () => {
+                    let prepared: Awaited<ReturnType<OutgoingMediaService['prepare']>> | undefined;
+                    try {
+                        prepared = await new OutgoingMediaService({ workspaceRoot: ctx.cwd }).prepare({ path: mediaPath, type: mediaType, caption: params.caption, voiceNote: params.voiceNote }, signal);
+                        metadata = prepared.metadata;
+                        if (!whatsappService.isSessionContextCurrent(sessionContext)) {
+                            await prepared.dispose();
+                            return failed(t('message.sender.sessionChanged'));
+                        }
+                        const upload = prepared;
+                        return await whatsappService.sendContent({
+                            recipientJid: target, text: params.caption ?? '', content: upload.content,
+                            sessionContext, signal, quote, sendTimeoutMs: 60_000,
+                            options: { brand: false, maxRetries: 1 }, sendOptions: { mediaUploadTimeoutMs: 60_000 },
+                            onSettled: async outcome => {
+                                try {
+                                    if (outcome.success) await recentsService.recordMessage({
+                                        messageId: outcome.messageId!, senderNumber: toRecentSenderNumber(target),
+                                        ...(quote ? { quotedMessageId: quote.messageId } : {}),
+                                        text: `[${upload.metadata.type}] ${upload.metadata.fileName}${params.caption ? `\n${params.caption}` : ''}`,
+                                        direction: 'outgoing', timestamp: Date.now()
+                                    });
+                                } finally {
+                                    await upload.dispose();
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        await prepared?.dispose();
+                        return failed(error instanceof Error ? error.message : t('message.sender.unknownError'));
+                    }
+                });
+            }
+            return { isError: !result.success, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ ...result, media: metadata }) }] };
         }
     });
 

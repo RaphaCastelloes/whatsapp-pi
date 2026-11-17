@@ -56,6 +56,14 @@ describe('MessageDetailView', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
+    it('shows missing native quote state and disables replying to an unavailable target', () => {
+        const onReply = vi.fn();
+        const view = new MessageDetailView({ title: 'Old message', messageId: 'old', senderNumber: '+15550000001', text: 'Old', direction: 'incoming', timestamp: Date.now(), quoteAvailable: false, onClose: vi.fn(), onReply });
+        view.handleInput('r');
+        expect(onReply).not.toHaveBeenCalled();
+        expect(view.render(160).join('\n')).toContain('Native quote unavailable');
+    });
+
     it('closes when the user presses Enter or Escape', () => {
         const onClose = vi.fn();
         const view = new MessageDetailView({

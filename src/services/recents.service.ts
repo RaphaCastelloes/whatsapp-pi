@@ -9,6 +9,7 @@ import type {
 import { SessionManager } from './session.manager.js';
 
 export interface RecentsMessageInput {
+    quotedMessageId?: string;
     messageId: string;
     senderNumber: string;
     senderName?: string;
@@ -179,6 +180,7 @@ export class RecentsService {
         const existing = this.store.messagesBySender[senderNumber] ?? [];
         const nextMessage: RecentConversationMessage = {
             messageId: input.messageId,
+            ...(input.quotedMessageId ? { quotedMessageId: input.quotedMessageId } : {}),
             senderNumber,
             text: normalizedText,
             direction: input.direction,
