@@ -27,6 +27,11 @@ const mocks = vi.hoisted(() => {
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),
         sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: 'MSG123', attempts: 1 }),
+        sendContent: vi.fn().mockImplementation(async (request: { onSettled?: (result: unknown) => Promise<void> }) => {
+            const result = { success: true, messageId: 'MEDIA123', attempts: 1 };
+            await request.onSettled?.(result);
+            return result;
+        }),
         resolveOutboundRecipientJid: vi.fn((recipient: string) => recipient),
         canonicalConversation: vi.fn((jid: string) => jid),
         getQuotedMessage: vi.fn(),
@@ -53,12 +58,21 @@ const mocks = vi.hoisted(() => {
         process: vi.fn().mockResolvedValue({ text: 'hello from whatsapp' })
     });
 
+    const createOutgoingMediaService = () => ({
+        prepare: vi.fn().mockResolvedValue({
+            content: { image: { url: 'fixture.jpg' } },
+            metadata: { type: 'image', fileName: 'fixture.jpg' },
+            dispose: vi.fn().mockResolvedValue(undefined)
+        })
+    });
+
     return {
         sessionManager: createSessionManager(),
         whatsappService: createWhatsAppService(),
         recentsService: createRecentsService(),
         menuHandler: createMenuHandler(),
         incomingMediaService: createIncomingMediaService(),
+        outgoingMediaService: createOutgoingMediaService(),
         extractIncomingText: vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' }),
         reset() {
             this.sessionManager = createSessionManager();
@@ -66,6 +80,7 @@ const mocks = vi.hoisted(() => {
             this.recentsService = createRecentsService();
             this.menuHandler = createMenuHandler();
             this.incomingMediaService = createIncomingMediaService();
+            this.outgoingMediaService = createOutgoingMediaService();
             this.extractIncomingText = vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' });
         }
     };
@@ -99,6 +114,10 @@ vi.mock('../../src/services/incoming-message.resolver.ts', () => ({
 
 vi.mock('../../src/services/incoming-media.service.ts', () => ({
     IncomingMediaService: vi.fn(function () { return mocks.incomingMediaService; })
+}));
+
+vi.mock('../../src/services/outgoing-media.service.ts', () => ({
+    OutgoingMediaService: vi.fn(function () { return mocks.outgoingMediaService; })
 }));
 
 type PiHandler = (event: any, ctx: any) => Promise<void>;
@@ -270,6 +289,140 @@ describe('whatsapp-pi owned turn delivery', () => {
         await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
         await finalTurn(pi, ctx, 'Redundant confirmation');
         expect(mocks.whatsappService.sendMessage).toHaveBeenCalledOnce();
+    });
+
+    it('clears the processing reaction as soon as the reply tool sends the answer', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const key = incoming().key;
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(key, '⏳');
+        const event = { message: { role: 'assistant', stopReason: 'toolUse', content: [
+            { type: 'toolCall', id: 'call', name: 'send_wa_message', arguments: {} }
+        ] } };
+        await pi.handlers.get('message_end')!(event, ctx);
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(key, '');
+        await pi.tools.get('send_wa_message').execute('call', { message: 'Tool message' });
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(key, '');
+        await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Done');
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction.mock.calls.filter(([reactionKey, emoji]) =>
+            reactionKey.id === key.id && emoji === ''
+        )).toHaveLength(1);
+    });
+
+    it('clears the processing reaction after the automatic WhatsApp reply is sent', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const event = makeAssistantEvent('Hello back!');
+        await pi.handlers.get('message_end')!(event, ctx);
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+        await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
+        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(incoming().key.remoteJid, 'Hello back!', true);
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('clears the processing reaction after a media reply is sent', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const result = await pi.tools.get('send_wa_media').execute('media', { path: 'fixture.jpg', type: 'image' }, undefined, undefined, { cwd: '.' });
+        expect(result.isError).toBe(false);
+        expect(mocks.whatsappService.sendContent).toHaveBeenCalledOnce();
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('does not clear the reaction for a failed send or a reply to another chat', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        await pi.tools.get('send_wa_message').execute('other', { jid: '15550000003@s.whatsapp.net', message: 'Other chat' });
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+        mocks.whatsappService.sendMessage.mockResolvedValueOnce({ success: false, attempts: 1 });
+        await pi.tools.get('send_wa_message').execute('failed', { message: 'Failed reply' });
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+        await finalTurn(pi, ctx, 'Successful retry');
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('clears only the answered epoch when another request from the same chat is consumed', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        await submit(pi, ctx, 'follow-up');
+        await pi.handlers.get('message_start')!(makeAssistantEvent(''), ctx);
+        await finalTurn(pi, ctx, 'Follow-up answer');
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming('follow-up').key, '');
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('does not clear the reaction for a queued message not consumed by the finished run', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        const queued = incoming('B', '15550000002@s.whatsapp.net');
+        await callback(queued);
+        const content = pi.sendUserMessage.mock.calls.at(-1)![0] as string;
+
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(queued.key, '');
+
+        await pi.handlers.get('agent_start')!({}, ctx);
+        await pi.handlers.get('input')!({ source: 'extension', text: content }, ctx);
+        await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: content }] } }, ctx);
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(queued.key, '');
+    });
+
+    it('waits for a delayed hourglass send before removing it', async () => {
+        const { pi, ctx } = await setup();
+        let finish!: () => void;
+        mocks.whatsappService.setMessageReaction.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await beginOwned(pi, ctx);
+        const ending = pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+        finish();
+        await ending;
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('clears the processing reaction for commands that do not start an agent run', async () => {
+        await setup();
+        mocks.incomingMediaService.process.mockResolvedValueOnce({ text: '/compact' });
+        await mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming());
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(1, incoming().key, '⏳');
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(2, incoming().key, '');
+    });
+
+    it('clears canceled queued reactions on abort but waits for the active run to end', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        const queued = incoming('queued');
+        await callback(queued);
+        mocks.incomingMediaService.process.mockResolvedValueOnce({ text: '/abort' });
+        const command = incoming('abort');
+        await callback(command);
+        expect(ctx.abort).toHaveBeenCalledOnce();
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(queued.key, '');
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(command.key, '');
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Aborted').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('clears the processing reaction if media preparation fails', async () => {
+        await setup();
+        mocks.incomingMediaService.process.mockRejectedValueOnce(new Error('media error'));
+        await expect(mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming())).rejects.toThrow('media error');
+        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+    });
+
+    it('does not clear an old account reaction using a new account', async () => {
+        const { pi, ctx } = await setup();
+        await beginOwned(pi, ctx);
+        mocks.whatsappService.isSessionContextCurrent.mockReturnValue(false);
+        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
     });
 
     it('a tool send to another chat does not suppress the rightful owned final reply', async () => {

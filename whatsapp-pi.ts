@@ -12,7 +12,7 @@ import { ReactionSender } from './src/services/reaction.sender.js';
 import { initI18n, t } from './src/i18n.js';
 import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './src/services/conversation-router.service.js';
 import type { WAMessageKey } from 'baileys';
-import type { MessageResult, QuoteTarget, TextSendOptions } from './src/models/whatsapp.types.js';
+import type { MessageResult, QuoteTarget, TextSendOptions, WhatsAppSessionContext } from './src/models/whatsapp.types.js';
 import { OutgoingMediaService } from './src/services/outgoing-media.service.js';
 
 const shutdownState = globalThis as typeof globalThis & {
@@ -64,14 +64,47 @@ export default function (pi: ExtensionAPI) {
         const context = whatsappService.getSessionContext();
         return JSON.stringify([context.accountScope, context.generation]);
     };
+    type ProcessingReaction = {
+        key: WAMessageKey;
+        context: WhatsAppSessionContext;
+        added: Promise<void>;
+        consumed: boolean;
+        epoch?: RoutingSnapshot['epoch'];
+    };
+    const processingReactions = new Map<string, ProcessingReaction>();
+    const reactionId = (key: WAMessageKey, scope: string) =>
+        JSON.stringify([scope, key.remoteJid, key.id, key.participant, key.fromMe]);
+    const clearProcessingReaction = async (id: string, reaction: ProcessingReaction) => {
+        if (processingReactions.get(id) !== reaction) return;
+        processingReactions.delete(id);
+        await reaction.added;
+        if (whatsappService.isSessionContextCurrent(reaction.context)) {
+            await whatsappService.setMessageReaction(reaction.key, '');
+        }
+    };
+    const clearProcessingReactions = async (consumedOnly = false) => {
+        const entries = [...processingReactions].filter(([, reaction]) => !consumedOnly || reaction.consumed);
+        await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
+    };
+    const clearUnconsumedReactions = async (except?: ProcessingReaction) => {
+        const entries = [...processingReactions].filter(([, reaction]) => !reaction.consumed && reaction !== except);
+        await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
+    };
     const router = new ConversationRouter(
         canonicalConversation,
         routingScope,
-        key => whatsappService.markIncomingProcessing(key, 'consumed')
+        key => {
+            whatsappService.markIncomingProcessing(key, 'consumed');
+            const reaction = processingReactions.get(reactionId(key, routingScope()));
+            if (reaction) reaction.consumed = true;
+        }
     );
 
     pi.on('input', event => { router.observeInput(event); });
-    pi.on('session_before_switch', () => { router.reset(); });
+    pi.on('session_before_switch', async () => {
+        router.reset();
+        await clearProcessingReactions();
+    });
 
     const trackOwnedSend = async (jid: string, snapshot: RoutingSnapshot | undefined, send: () => Promise<MessageResult>): Promise<MessageResult> => {
         if (snapshot && snapshot.epoch.scope !== routingScope()) {
@@ -81,6 +114,15 @@ export default function (pi: ExtensionAPI) {
         try {
             const result = await send();
             router.finishSend(token, result);
+            const target = canonicalConversation(jid);
+            if (result.success && snapshot && target && snapshot.epoch.scope === routingScope()) {
+                // Only a reply to this epoch's chat should clear its consumed requests.
+                const answered = [...processingReactions].filter(([, reaction]) =>
+                    reaction.epoch === snapshot.epoch && !!reaction.key.remoteJid &&
+                    canonicalConversation(reaction.key.remoteJid) === target
+                );
+                await Promise.allSettled(answered.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
+            }
             return result;
         } catch (error) {
             router.finishSend(token, { success: false, delivery: 'unknown' });
@@ -250,9 +292,6 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
     });
 
-    // Incoming messages that currently show the ⏳ processing reaction
-    const processingReactionKeys: WAMessageKey[] = [];
-
     const toRecentSenderNumber = (recipientJid: string): string => {
         const canonical = canonicalConversation(recipientJid) ?? recipientJid;
         return /^\d+@s\.whatsapp\.net$/.test(canonical) ? `+${canonical.split('@')[0]}` : canonical;
@@ -295,71 +334,85 @@ export default function (pi: ExtensionAPI) {
         const sender = remoteJid?.split('@')[0] || "unknown";
         const pushName = msg.pushName || "WhatsApp User";
 
+        let reaction: ProcessingReaction | undefined;
+        let id: string | undefined;
+        let handedOff = false;
         if (remoteJid && msg.key.id) {
             void whatsappService.markRead(msg.key);
-            const processingKey: WAMessageKey = { ...msg.key };
-            processingReactionKeys.push(processingKey);
-            void whatsappService.setMessageReaction(processingKey, '⏳');
+            const key = { ...msg.key };
+            id = reactionId(key, routingScope());
+            reaction = {
+                key, context: msg.sessionContext, consumed: false,
+                added: whatsappService.setMessageReaction(key, '⏳')
+            };
+            processingReactions.set(id, reaction);
         }
 
-        const resolved = extractIncomingText(msg.message, recentsService);
-        if (resolved.kind === 'system') {
-            logger.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${resolved.text}`);
-            return;
-        }
-
-        const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
-        if (runtimeId !== router.getRuntimeId() || !whatsappService.isSessionContextCurrent(msg.sessionContext)) {
-            if (whatsappService.isSessionContextCurrent(msg.sessionContext)) whatsappService.markIncomingProcessing(msg.key, 'failed');
-            return;
-        }
-
-        // Format message header with group context when applicable
-        const messageHeader = isGroup
-            ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
-            : `Message from ${pushName} (${sender}):`;
-
-        // Include quote information if present
-        let fullText = text;
-        if ('quotedMessage' in resolved && resolved.quotedMessage) {
-            const quotePrefix = t('incoming.quoted.replyingTo', { quotedText: resolved.quotedMessage.quotedText });
-            fullText = `${quotePrefix}\n\n${text}`;
-        }
-
-        logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
-
-        whatsappService.markIncomingProcessing?.(msg.key, 'prepared');
-
-        // Commands must not also become ordinary agent prompts.
-        if (text.trim().toLowerCase().startsWith('/compact')) {
-            logger.log(`[WhatsApp-Pi] Session compact requested by ${pushName}.`);
-
-            if (_ctx) {
-                router.reset();
-                _ctx.compact();
-                await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
+        try {
+            const resolved = extractIncomingText(msg.message, recentsService);
+            if (resolved.kind === 'system') {
+                logger.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${resolved.text}`);
+                return;
             }
-            return;
-        }
 
-        if (text.trim().toLowerCase().startsWith('/abort')) {
-            logger.log(`[WhatsApp-Pi] Abort requested by ${pushName}.`);
-            if (_ctx) {
-                router.reset();
-                _ctx.abort();
-                await whatsappService.sendMessage(remoteJid, "Aborted! ✅", true);
+            const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
+            if (runtimeId !== router.getRuntimeId() || !whatsappService.isSessionContextCurrent(msg.sessionContext)) {
+                if (whatsappService.isSessionContextCurrent(msg.sessionContext)) whatsappService.markIncomingProcessing(msg.key, 'failed');
+                return;
             }
-            return;
-        }
 
-        const content: RoutedContent = imageBuffer && imageMimeType ? [
-            { type: 'text', text: `${messageHeader} ${fullText}` },
-            { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
-        ] : `${messageHeader} ${fullText}`;
-        const submitted = router.prepare(content, msg.key);
-        // Preserve Pi input policies; ownership requires observed, exact consumed content.
-        pi.sendUserMessage(submitted.content as Parameters<ExtensionAPI['sendUserMessage']>[0], { deliverAs: 'followUp' });
-        whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
+            // Format message header with group context when applicable
+            const messageHeader = isGroup
+                ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
+                : `Message from ${pushName} (${sender}):`;
+
+            // Include quote information if present
+            let fullText = text;
+            if ('quotedMessage' in resolved && resolved.quotedMessage) {
+                const quotePrefix = t('incoming.quoted.replyingTo', { quotedText: resolved.quotedMessage.quotedText });
+                fullText = `${quotePrefix}\n\n${text}`;
+            }
+
+            logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
+
+            whatsappService.markIncomingProcessing?.(msg.key, 'prepared');
+
+            // Commands must not also become ordinary agent prompts.
+            if (text.trim().toLowerCase().startsWith('/compact')) {
+                logger.log(`[WhatsApp-Pi] Session compact requested by ${pushName}.`);
+
+                if (_ctx) {
+                    router.reset();
+                    _ctx.compact();
+                    await clearUnconsumedReactions(reaction);
+                    await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
+                }
+                return;
+            }
+
+            if (text.trim().toLowerCase().startsWith('/abort')) {
+                logger.log(`[WhatsApp-Pi] Abort requested by ${pushName}.`);
+                if (_ctx) {
+                    router.reset();
+                    _ctx.abort();
+                    await clearUnconsumedReactions(reaction);
+                    await whatsappService.sendMessage(remoteJid, "Aborted! ✅", true);
+                }
+                return;
+            }
+
+            const content: RoutedContent = imageBuffer && imageMimeType ? [
+                { type: 'text', text: `${messageHeader} ${fullText}` },
+                { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
+            ] : `${messageHeader} ${fullText}`;
+            const submitted = router.prepare(content, msg.key);
+            // Preserve Pi input policies; ownership requires observed, exact consumed content.
+            pi.sendUserMessage(submitted.content as Parameters<ExtensionAPI['sendUserMessage']>[0], { deliverAs: 'followUp' });
+            handedOff = true;
+            whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
+        } finally {
+            if (!handedOff && id && reaction) await clearProcessingReaction(id, reaction);
+        }
     });
 
     const quoteSchema = Type.Object({
@@ -700,16 +753,16 @@ export default function (pi: ExtensionAPI) {
         if (event.message.role === 'user' || event.message.role === 'custom') router.consume(event.message);
         if (event.message.role === 'assistant') {
             router.freeze();
+            const epoch = router.snapshot()?.epoch;
+            for (const reaction of processingReactions.values()) {
+                if (reaction.consumed && !reaction.epoch) reaction.epoch = epoch;
+            }
             const target = router.defaultTarget();
             if (target && sessionManager.getStatus() === 'connected') await whatsappService.sendPresence(target, 'composing');
         }
     });
     pi.on('message_end', async event => {
         router.buffer(event.message);
-        if (event.message.role === 'assistant' && processingReactionKeys.length > 0) {
-            // Clear the ⏳ processing reaction once the assistant has responded.
-            for (const key of processingReactionKeys.splice(0)) await whatsappService.setMessageReaction(key, '');
-        }
     });
     pi.on('turn_end', async (_event, ctx) => {
         if (sessionManager.getStatus() !== 'connected') return;
@@ -730,13 +783,15 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(t('notify.replyFailed'), 'error');
         }
     });
-    pi.on('agent_end', event => {
+    pi.on('agent_end', async event => {
         const last = [...event.messages].reverse().find(message => message.role === 'assistant');
         router.endRun(last?.role === 'assistant' && last.stopReason === 'error');
+        await clearProcessingReactions(true);
     });
 
     pi.on("session_shutdown", async () => {
         router.reset();
+        await clearProcessingReactions();
         logger.log("[WhatsApp-Pi] Session shutdown detected. Stopping WhatsApp service...");
         await whatsappService.stop();
     });
