@@ -2,15 +2,16 @@
 
 **Feature**: `036-baileys-capability-roadmap`
 **Created**: 2026-10-21
-**Status**: Phases 1–2 implemented and validated; Phase 2 independent review fixes verified, 345 tests passed and authorized live rendering/playback confirmed by the operator. Phase 3 not started or authorized.
+**Status**: Phases 1–2 implemented and validated; Phase 2 independent review fixes verified, 345 tests passed and authorized live rendering/playback confirmed by the operator. Phase 3 (U8–U10) is implemented on `feat/baileys-conversation-fidelity`, independently reviewed/corrected and validated with 397 passing tests plus authorized restart/native-quote live checks. Live backfill import and delivery/read receipts remain unverified: the bounded request reached unknown timeout and no receipt events were observed. After the implementation stop gate, the fork owner separately authorized commit/push/upstream PR, without implying upstream maintainer approval.
 **Input**: Implement the analyzed Baileys gaps in three ordered phases: Foundation, Everyday usefulness, Conversation fidelity. Preserve the owner's architecture and programming style. Optional expansion remains a comment, not scheduled work.
 
 ## Decisions Confirmed by the User
 
+- The fork owner authorized Phase 3 implementation, followed by an independent read-only `openai-codex/gpt-6.1-sol` review, all declared checks and live tests only with the designated recipient. The original execution finished with ignored `PR3.md` and stopped without publication. The fork owner then separately authorized commit, push and an upstream PR, using existing validation evidence. Real rollback and production-data migration remain outside that authorization.
 - Planning artifacts follow the repository's numbered `specs/` convention.
 - Different allowed chats continue to share one Pi model context. This is a trusted-user integration, not a multi-tenant service. Correct destination routing does not provide context isolation.
 - The fork owner subsequently authorized Phase 2 implementation, an independent `openai-codex/gpt-6.1-sol` review, and live sends to an explicitly designated test recipient. A separate Phase 2 branch preserves the existing Phase 1 upstream PR. This is not approval of Phase 3 or publication of the new work.
-- The original request authorized planning and review. The user subsequently authorized Phase 1 (U1–U4) implementation; the separate later Phase 2 approval is recorded above. Phase 3 remains unauthorized.
+- The original request authorized planning and review. The user subsequently authorized Phase 1 (U1–U4) implementation; the separate later Phase 2 approval is recorded above. Phase 3 was authorized separately in the current execution.
 - The user approved the bounded replay/storage/cancellation corrections from the planning review. The custom-message lifecycle candidate then failed input-policy characterization, and the user approved preserving `sendUserMessage` with an exact-content-correlated sidecar. That replacement passed the recorded offline compatibility checks.
 - A subsequent read-only source review with `openai-codex/gpt-6.1-sol` identified three blocking correctness issues and two actionable notes. Corrections and regression evidence are recorded in [plan.md](plan.md). These are local fork decisions, not upstream maintainer approval.
 

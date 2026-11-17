@@ -60,6 +60,7 @@ export class MessageSender {
      * @returns Promise resolving to a result object indicating success or failure.
      */
     public async send(request: MessageRequest): Promise<MessageResult> {
+        await this.whatsappService.prepareArchive?.();
         const context = request.sessionContext ?? this.whatsappService.getSessionContext();
         const messageId = request.sendOptions?.messageId ?? generateMessageIDV2();
         const abort = new AbortController();
@@ -141,11 +142,17 @@ export class MessageSender {
                 }
 
                 if (request.signal?.aborted) throw new WhatsAppError('ABORTED', t('media.aborted'));
-                const quoted = request.quote ? this.whatsappService.getQuotedMessage(request.recipientJid, request.quote) : undefined;
+                let quoted = request.quote ? this.whatsappService.getQuotedMessage(request.recipientJid, request.quote) : undefined;
                 if (request.quote && !quoted) throw new WhatsAppError('QUOTE_UNAVAILABLE', t('quote.unavailable'));
                 // 4. Send the message
                 // Note: Branding π is applied here to ensure consistency
-                this.whatsappService.registerOutgoing(request.recipientJid, messageId);
+                this.whatsappService.registerOutgoing(request.recipientJid, messageId, content);
+                await this.whatsappService.flushArchive?.();
+                this.assertCurrentSession(context);
+                if (request.signal?.aborted) throw new WhatsAppError('ABORTED', t('media.aborted'));
+                if (socket !== this.whatsappService.getSocket()) throw new WhatsAppError('SOCKET_NOT_INIT', t('message.sender.socketNotInitialized'));
+                quoted = request.quote ? this.whatsappService.getQuotedMessage(request.recipientJid, request.quote) : undefined;
+                if (request.quote && !quoted) throw new WhatsAppError('QUOTE_UNAVAILABLE', t('quote.unavailable'));
                 transmissionStarted = true;
                 onStarted();
                 const response = await socket.sendMessage(request.recipientJid, content, { ...request.sendOptions, ...(quoted ? { quoted } : {}), messageId });

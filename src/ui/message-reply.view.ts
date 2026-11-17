@@ -56,10 +56,11 @@ export async function showMessageReplyView(
     const sessionContext = props.whatsappService.getSessionContext();
     const quote: QuoteTarget = {
         messageId: props.selectedMessage.messageId, conversationJid: props.selectedMessage.senderNumber,
+        scope: props.selectedMessage.historyScope, participant: props.selectedMessage.key?.participant ?? undefined,
         fromMe: props.selectedMessage.direction === 'outgoing'
     };
     const original = props.whatsappService.getQuotedMessage(props.selectedMessage.senderNumber, quote);
-    if (!original?.key.remoteJid) {
+    if (props.selectedMessage.quoteAvailable === false || !original?.key.remoteJid) {
         ctx.ui.notify(t('quote.unavailable'), 'error');
         return;
     }

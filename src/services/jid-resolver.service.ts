@@ -6,7 +6,17 @@ export class JidResolver {
     private readonly phoneToLid = new Map<string, string>();
     private readonly conflicts = new Set<string>();
 
-    constructor(private readonly onChange: () => void = () => {}) {}
+    private suppressChanges = false;
+    private readonly onChange: () => void;
+    constructor(onChange: () => void = () => {}) {
+        this.onChange = () => { if (!this.suppressChanges) onChange(); };
+    }
+
+    public replaceState(state: { aliases: Array<{ lid: string; pn: string }>; conflicts: string[] }): void {
+        this.suppressChanges = true;
+        try { this.clear(); this.restoreState(state); }
+        finally { this.suppressChanges = false; this.onChange(); }
+    }
 
     public normalize(jid: string): string {
         if (/^\+?\d+$/.test(jid)) return `${jid.replace(/^\+/, '')}@s.whatsapp.net`;
@@ -61,6 +71,16 @@ export class JidResolver {
         const participant = key.participant ? this.canonical(key.participant) : '';
         if (!chat || participant === undefined) return undefined;
         return JSON.stringify([scope, chat, key.id, key.fromMe ?? false, participant]);
+    }
+
+    public exportState(): { aliases: Array<{ lid: string; pn: string }>; conflicts: string[] } {
+        return { aliases: [...this.lidToPhone].map(([lid, pn]) => ({ lid, pn })), conflicts: [...this.conflicts] };
+    }
+
+    public restoreState(state: { aliases: Array<{ lid: string; pn: string }>; conflicts: string[] }): void {
+        for (const { lid, pn } of state.aliases) this.bind(lid, pn);
+        for (const jid of state.conflicts) this.conflicts.add(jid);
+        this.onChange();
     }
 
     public clear(): void {

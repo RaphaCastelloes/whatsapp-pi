@@ -2,7 +2,7 @@ import type { WAMessage, WAMessageKey, AnyMessageContent, MiscMessageGenerationO
 
 export type SessionStatus = 'logged-out' | 'pairing' | 'connected' | 'disconnected';
 
-export type IncomingProcessingState = 'reserved' | 'prepared' | 'handed-off' | 'consumed' | 'failed';
+export type IncomingProcessingState = 'reserved' | 'prepared' | 'handed-off' | 'consumed' | 'failed' | 'interrupted';
 
 export interface WhatsAppSessionContext {
     readonly accountScope: string;
@@ -42,6 +42,7 @@ export interface IncomingMessage {
 }
 
 export interface QuoteTarget {
+    scope?: string;
     messageId: string;
     conversationJid?: string;
     fromMe?: boolean;
@@ -101,6 +102,17 @@ export interface DocumentMetadata {
 export type MessageDirection = 'incoming' | 'outgoing';
 
 export interface RecentConversationMessage {
+    media?: import('./message-archive.types.js').SafeMediaMetadata;
+    historyScope?: string;
+    quoteAvailable?: boolean;
+    key?: WAMessageKey;
+    status?: number;
+    sendState?: 'accepted' | 'unknown' | 'failed';
+    editedAt?: number;
+    deleted?: 'remote' | 'local';
+    receipts?: Record<string, { deliveredAt?: number; readAt?: number; playedAt?: number }>;
+    reactions?: Record<string, { text: string; timestamp: number }>;
+    incomplete?: boolean;
     quotedMessageId?: string;
     messageId: string;
     senderNumber: string;
@@ -119,7 +131,7 @@ export interface RecentConversationSummary {
     isAllowed: boolean;
 }
 
-export interface SelectedMessageContext {
+export interface SelectedMessageContext extends RecentConversationMessage {
     quoteAvailable?: boolean;
     messageId: string;
     senderNumber: string;

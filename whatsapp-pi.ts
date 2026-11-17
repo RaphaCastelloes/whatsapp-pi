@@ -44,6 +44,12 @@ export default function (pi: ExtensionAPI) {
         default: ""
     });
 
+    pi.registerFlag("whatsapp-history-full", {
+        description: "Opt in to broader initial WhatsApp history sync; imports still obey allowed chats and archive limits.",
+        type: "boolean",
+        default: false
+    });
+
     const sessionManager = new SessionManager();
     const whatsappService = new WhatsAppService(sessionManager);
     const recentsService = new RecentsService(sessionManager);
@@ -153,6 +159,7 @@ export default function (pi: ExtensionAPI) {
             logger.log(`[WhatsApp-Pi] Group-only mode: bound to ${boundGroupJid}`);
         }
 
+        whatsappService.setFullHistorySync?.(pi.getFlag("whatsapp-history-full") === true);
         await sessionManager.ensureInitialized();
         await recentsService.ensureInitialized();
         installGracefulShutdownHandlers();
@@ -534,6 +541,29 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
+    pi.registerTool({
+        name: "request_wa_history",
+        label: t('history.label'),
+        description: t('history.description'),
+        promptSnippet: "request_wa_history({mode:'request',jid,count?}) explicitly fetches bounded older history; {mode:'status',requestId?} reads retained status locally. Never call implicitly while listing local history.",
+        parameters: Type.Object({
+            mode: Type.Union([Type.Literal('request'), Type.Literal('status')]),
+            jid: Type.Optional(Type.String({ description: "Explicit allowed/bound conversation JID for a network request." })),
+            count: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+            requestId: Type.Optional(Type.String({ description: "Retained request ID for local status, or omit to list statuses." }))
+        }),
+        async execute(_id, params) {
+            try {
+                const result = params.mode === 'status' ? await whatsappService.getHistoryStatus(params.requestId)
+                    : params.jid ? await whatsappService.requestHistory(params.jid, params.count ?? 50)
+                        : { success: false, error: t('history.denied') };
+                return { isError: !result.success, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+            } catch {
+                return { isError: true, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: t('history.failed') }) }] };
+            }
+        }
+    });
+
     // Register list_wa_conversations tool (LLM-callable, read-only)
     pi.registerTool({
         name: "list_wa_conversations",
@@ -543,11 +573,12 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             onlyIncoming: Type.Optional(Type.Boolean({ description: "Only return conversations whose last message is incoming (waiting for a reply)." })),
             onlyAllowed: Type.Optional(Type.Boolean({ description: "Only return conversations from senders/groups currently in the allow list." })),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of conversations to return (default 20)." }))
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of conversations to return (default 20)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID; available scopes are included in the result. Never fetches from WhatsApp." }))
         }),
         async execute(_toolCallId, params) {
             try {
-                const conversations = await recentsService.getRecentConversations();
+                const conversations = await recentsService.getRecentConversations(params.scope);
                 let filtered = conversations;
                 if (params.onlyIncoming) {
                     filtered = filtered.filter(c => c.lastMessageDirection === 'incoming');
@@ -560,7 +591,8 @@ export default function (pi: ExtensionAPI) {
                 return {
                     isError: false,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: filtered.length, conversations: filtered }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: filtered.length, conversations: filtered,
+                        scopes: await recentsService.getHistoryScopes?.(), storage: recentsService.getArchiveState?.() }) }]
                 };
             } catch (error) {
                 return {
@@ -580,7 +612,9 @@ export default function (pi: ExtensionAPI) {
         promptSnippet: "get_wa_conversation_history({senderNumber, limit?}) - Get the most recent messages with a sender. `senderNumber` accepts +E164 (e.g. +14155551212), raw digits, or a JID (e.g. 14155551212@s.whatsapp.net, 120363012345@g.us). Read-only.",
         parameters: Type.Object({
             senderNumber: Type.String({ description: "Phone number (+E164 or raw digits) or WhatsApp JID of the conversation." }),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of messages to return (default 20)." }))
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum number of messages to return (default 20)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID." })),
+            cursor: Type.Optional(Type.String({ description: "Opaque cursor from the previous local page. No network history request is made." }))
         }),
         async execute(_toolCallId, params) {
             if (!params.senderNumber || !params.senderNumber.trim()) {
@@ -591,13 +625,16 @@ export default function (pi: ExtensionAPI) {
                 };
             }
             try {
-                const messages = await recentsService.getConversationHistory(params.senderNumber);
                 const limit = typeof params.limit === 'number' ? params.limit : 20;
+                const page = recentsService.getArchiveState?.()?.enabled
+                    ? await recentsService.getHistoryPage(params.senderNumber, { limit, scope: params.scope, cursor: params.cursor }) : undefined;
+                if (!page && (params.scope || params.cursor)) throw new Error(t('archive.unknownScope'));
+                const messages = page?.messages ?? await recentsService.getConversationHistory(params.senderNumber);
                 const sliced = messages.slice(-limit);
                 return {
                     isError: false,
                     details: undefined,
-                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: sliced.length, messages: sliced }) }]
+                    content: [{ type: "text" as const, text: JSON.stringify({ success: true, count: sliced.length, messages: sliced, nextCursor: page?.nextCursor, storage: page?.storage }) }]
                 };
             } catch (error) {
                 return {
@@ -616,11 +653,12 @@ export default function (pi: ExtensionAPI) {
         description: t("tool.checkNew.description"),
         promptSnippet: "check_wa_new_messages({sinceTimestamp?}) - List conversations whose most recent message is incoming (i.e. waiting for a reply). Optional `sinceTimestamp` (ms epoch) filters to messages newer than that. Read-only.",
         parameters: Type.Object({
-            sinceTimestamp: Type.Optional(Type.Integer({ minimum: 0, description: "Only include conversations whose last incoming message timestamp is strictly greater than this (ms since epoch)." }))
+            sinceTimestamp: Type.Optional(Type.Integer({ minimum: 0, description: "Only include conversations whose last incoming message timestamp is strictly greater than this (ms since epoch)." })),
+            scope: Type.Optional(Type.String({ description: "Explicit local history scope ID." }))
         }),
         async execute(_toolCallId, params) {
             try {
-                const conversations = await recentsService.getRecentConversations();
+                const conversations = await recentsService.getRecentConversations(params.scope);
                 const since = typeof params.sinceTimestamp === 'number' ? params.sinceTimestamp : 0;
                 const pending = conversations.filter(c =>
                     c.lastMessageDirection === 'incoming' && c.lastMessageTime > since

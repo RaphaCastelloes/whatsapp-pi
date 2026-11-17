@@ -33,7 +33,11 @@ export class MessageDetailView {
     }
 
     render(width: number): string[] {
-        const bodyText = this.props.text.length > 0 ? this.props.text : t('message.detail.noReadableText');
+        const original = this.props.text.length > 0 ? this.props.text : t('message.detail.noReadableText');
+        const lifecycle = { status: this.props.status, sendState: this.props.sendState, editedAt: this.props.editedAt,
+            deleted: this.props.deleted, receipts: this.props.receipts, reactions: this.props.reactions, incomplete: this.props.incomplete };
+        const observed = Object.values(lifecycle).some(value => value !== undefined);
+        const bodyText = observed ? `${original}\n\n${t('archive.lifecycle')}\n${JSON.stringify(lifecycle, null, 2)}` : original;
 
         const availableWidth = Math.max(20, width - 4);
         const rawHeaderLines = [

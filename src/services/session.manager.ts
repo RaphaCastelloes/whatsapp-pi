@@ -1,5 +1,5 @@
 import { useMultiFileAuthState } from 'baileys';
-import { basename, join } from 'path';
+import { basename, join, relative } from 'path';
 import { readFile, writeFile, mkdir, rm, rename, readdir } from 'fs/promises';
 import { SessionStatus } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
@@ -505,6 +505,10 @@ export class SessionManager {
     async setOperatorJid(jid: string) {
         this.operatorJid = jid;
         await this.saveConfig();
+    }
+
+    getArchiveStorageOptions() {
+        return { root: this.storagePaths.archiveDir, authProfile: relative(this.storagePaths.root, this.authStateDir), legacyPath: this.storagePaths.recentsPath };
     }
 
     getAuthStateDir(): string {

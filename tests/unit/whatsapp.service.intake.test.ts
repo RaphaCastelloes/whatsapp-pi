@@ -51,10 +51,12 @@ describe('WhatsAppService intake', () => {
 
     it('reserves before awaiting processing and suppresses concurrent redelivery', async () => {
         let finish!: () => void;
-        callback.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+        let entered!: () => void;
+        const callbackEntered = new Promise<void>(resolve => { entered = resolve; });
+        callback.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; entered(); }));
         const batch = { type: 'notify' as const, messages: [message('same')] };
         const processing = service.handleIncomingMessages(batch);
-        await Promise.resolve();
+        await callbackEntered;
         await service.handleIncomingMessages(batch);
         expect(callback).toHaveBeenCalledTimes(1);
         finish();

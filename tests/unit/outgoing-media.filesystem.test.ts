@@ -56,15 +56,17 @@ describe('opened-file authority and nonregular inputs', () => {
             mocks.open.mockImplementationOnce(async (path, flags, mode) => {
                 await unlink(file);
                 await run('mkfifo', [file]);
+                expect(Number(flags) & constants.O_NONBLOCK).not.toBe(0);
                 return original.open(path, flags, mode);
             });
         }
-        // Unblock a broken implementation after 200 ms so the red test cannot wedge a worker.
+        // Leave room for mkfifo/process scheduling under parallel suites. The flag assertion
+        // independently proves nonblocking open; release still prevents a red test wedging a worker.
         const release = new Promise<void>(resolve => setTimeout(() => {
             void original.open(file, constants.O_WRONLY | constants.O_NONBLOCK).then(handle => handle.close(), () => {}).finally(resolve);
-        }, 200));
+        }, 2000));
         const pending = new OutgoingMediaService({ workspaceRoot: root }).prepare({ path: file, type: 'document' });
-        const rejectedPromptly = await Promise.race([pending.then(() => false, () => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 100))]);
+        const rejectedPromptly = await Promise.race([pending.then(() => false, () => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1000))]);
         await release;
         await pending.then(value => value.dispose(), () => {});
         expect(rejectedPromptly).toBe(true);

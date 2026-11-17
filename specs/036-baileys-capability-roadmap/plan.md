@@ -10,7 +10,47 @@ deepened: 2026-10-21
 # Implementation Plan: Baileys Capability Roadmap
 
 **Feature**: `036-baileys-capability-roadmap` | **Spec**: [spec.md](spec.md) | **Tasks**: [tasks.md](tasks.md)
-**Implementation status**: Phases 1–2 (U1–U7) implemented and validated. Phase 2 is on `feat/baileys-everyday-usefulness`, based on `948f539`; the fork owner subsequently authorized committing, pushing to the fork and opening an upstream PR dependent on Phase 1 PR #14. This is publication approval, not upstream maintainer approval. Phase 3 is not started or authorized.
+**Implementation status**: Phases 1–2 (U1–U7) implemented and validated. Phase 2 is on `feat/baileys-everyday-usefulness`, based on `948f539`; the fork owner subsequently authorized committing, pushing to the fork and opening an upstream PR dependent on Phase 1 PR #14. This is publication approval, not upstream maintainer approval. Phase 3 is implemented on `feat/baileys-conversation-fidelity` from `875ad9e`; requested independent review/corrections, final automated validation and representative authorized live checks are complete with the explicit history/receipt limits below. `PR3.md` is a local ignored handoff. After that stop gate, the fork owner separately authorized committing, pushing to the fork and opening an upstream PR dependent on PRs #14 and #15. This is fork publication approval, not upstream maintainer approval.
+
+### Phase 3 execution and validation
+
+- The fork owner approved U8–U10, read-only independent `openai-codex/gpt-6.1-sol` review, final validation and live checks with the designated recipient. The original stop gate was an ignored `PR3.md` with no publication; that gate completed before separate commit/push/PR authorization. The owner chose existing validation evidence rather than a new demo or additional live activity.
+- `MessageStore` remains authoritative for raw retry data and normalized durable records. `message-store.persistence.ts` is a disk/profile/lock helper, not a second repository. `message-archive.types.ts` carries explicit allowlisted schemas.
+- Offline profile/account markers, read-only legacy import and owner-only backup, atomic serialized/coalesced writes, safe quote projections, interrupted outcomes, scope/cursor projections, retention and admission protection are implemented. Runtime account/profile changes preserve partition isolation; older unpaired recents are never attributed to the next login.
+- Explicit `request_wa_history` uses complete retained anchors, at most 100 messages, one active request per chat, local status, 60-second unknown outcomes and interrupted restart/disconnect semantics. Installed rc14 emits on-demand `isLatest` as undefined; exact peer ID plus on-demand progress 100 is the correlated terminal evidence. Generic status completion is not correlated.
+- Typed history/lifecycle handlers bypass agent and media processing. Observed receipts remain per participant in groups; edits, reactions, remote/local deletion and before-base updates reconcile within bounded state. Admission floors prevent protected content resurrection under pressure. No outbound destructive tools were added.
+- README documents archive limits, degraded recovery and rollback's omission of post-migration records in the old-code view. Automated migration tests use temporary data only; no real rollback or auth migration has been performed.
+- Pre-review checkpoint passed 383 tests across 42 files, lint/typecheck/whitespace. Final post-correction validation passed **397 tests across 43 files**, `npm run lint`, `npm run typecheck` and `git diff --check`, all with temporary `HOME` and `PI_CODING_AGENT_DIR`. No build script is declared.
+- Isolated `pi --mode rpc --no-session --no-extensions --no-skills --no-prompt-templates --no-themes -e ./whatsapp-pi.ts` returned a successful `get_state` response without credentials or auto-connect. Repeated after the seven review corrections; the final ownership guard has direct regression/full-suite coverage.
+- Added test suites cover migration/restart, retention, profile/account/intent lifetimes, archive-backed recents/cursors, native post-restart quote serialization, history request state, tool modes, typed lifecycle and source-review corrections. A preexisting 100 ms FIFO fixture deadline flaked under the expanded parallel suite; the fixture now directly asserts `O_NONBLOCK` and retains a bounded, scheduling-tolerant watchdog/unblock. No media runtime behavior changed for that fixture.
+
+#### Phase 3 independent review and corrections
+
+`pi-subagents` **0.80.0**, Pi host **1.3.0** and registry availability were checked before launch. The configured reviewer default differed; an explicit per-run override and actual run-status evidence confirmed **`openai-codex/gpt-6.1-sol`**, medium thinking, for the read-only reviewer and retained re-review. No model/provider fallback was used. Reviewer runs `392b10c2-bf8c-4e81-8837-bc5e211657b8` and `affc2d67-8e2e-4cb1-ab20-9953b0e7bffe` inspected source only and executed no commands/live operations.
+
+| Finding | Correction / regression |
+|---|---|
+| P1: prior-account aliases/conflicts survive activation | Atomically replace identity state with callbacks suppressed while restoring; test account and relative-auth-profile changes. |
+| P1: old raw content survives floor eviction | Retain observed timestamps on raw entries, enforce admission against those timestamps and explicitly invalidate chat raw entries. Test advancing clocks and count pressure. |
+| P1: pending edits/history overlap expose stale quotes | Invalidate stale raw envelopes after reconciliation; native quotes use the reconciled projection. |
+| P1: archive await opens quote/socket race | Revalidate active socket and quote immediately after persistence and before transmission. |
+| P1: ignored live content enters durable archive | Retain bounded account-scoped memory-only summary previews, never new durable/raw/quotable content. |
+| P2: scalar validation accepts nested objects | Validate completeness, request progress/type/order/completion/count and pending-deletion domains; preserve corrupt originals byte-for-byte. |
+| P2: uncertain intent used as history anchor | Require observed retained projection evidence, not an intent-only key. |
+
+All 13 new review regressions failed before correction and passed afterward. The same reviewer verified all seven fixes: **“No issues found”**, **“OK with notes”** pending final tests/live validation. A final separately reproduced ownership regression ensures retained extension-generated sends remain recognized as own echoes after restart without persisting raw protocol payloads; manually authored/imported outgoing records without the extension send-state marker are not newly classified as owned. The same retained exact-model reviewer checked that final guard and regression in run `19a67164-56d5-4b94-a306-5c37cb1e8790`: **“No issues found”**, final source-review verdict **OK**. Parent-run final validation remains separate evidence.
+
+#### Phase 3 authorized live evidence and limits
+
+A standalone harness used the explicitly approved saved linked-device session with a **temporary archive and no real recents inputs/migration**. The native recipient-existence query verified only the designated contact. It sent three non-sensitive generated text fixtures: an anchor, a native reply, then a reply after disconnect/offline restart/reconnect.
+
+- **3/3 socket sends accepted**. Offline history survived restart, raw retry data was absent after restart, and the supported sanitized quote projection remained available. The post-reconnect send contained the correct native quoted stanza ID.
+- The real on-disk archive was `0600` and the scan found no prohibited media/context secret fields.
+- Explicit **count=3** history request returned a request ID/pending state, then reached **unknown timeout with 0 imported records**. No reliably correlated history chunk completed it. This validates truthful bounded-request/timeout behavior, **not successful live backfill import**.
+- No delivery/read receipt events were observed for these sends. Send-state acceptance is not claimed as recipient delivery/read or client rendering. Live group receipts, edit/delete/reaction permutations and alternative devices were not exercised; automated fixtures cover those paths.
+- The harness disconnected **without logout**, and saved auth remained present. Only normal Baileys credential refresh used the existing linked session; no auth files were copied/migrated, Pi settings changed, business files uploaded, real rollback performed, or remote destructive actions issued.
+
+The local PR handoff is `/PR3.md`, ignored alongside earlier drafts. Implementation stopped at Phase 2 HEAD `875ad9e` before the fork owner separately authorized publication of Phase 3. The publication retains the documented live-history/receipt verification limits and excludes local caches, drafts and unrelated maintenance notes.
 
 ### Phase 2 execution and validation
 
@@ -400,7 +440,7 @@ flowchart TB
 
 ### Phase 3: Conversation fidelity
 
-- [ ] U8. **Persist authoritative records and migrate recents safely**
+- [x] U8. **Persist authoritative records and migrate recents safely**
 
 **Goal / requirements**: Restart-safe lookup/transcript fidelity within explicit limits; R1, R6, R8, R11.
 **Dependencies**: Phase 2 gate; extend the U3 store rather than replace it with a parallel repository.
@@ -430,7 +470,7 @@ Apply 1,000 records per conversation, 30-day maximum age and the 100 MiB partiti
 
 **Verification**: Restart/migration fixtures use temporary/mock files only; original credentials/recents are never test inputs. Updated recents no longer have an independent write authority. Disk-full/corruption/rollback behavior is documented before enabling archive persistence.
 
-- [ ] U9. **Import history and request bounded backfill explicitly**
+- [x] U9. **Import history and request bounded backfill explicitly**
 
 **Goal / requirements**: Faithful linked-device history without surprise agent/network work; R9, R11.
 **Dependencies**: U8.
@@ -454,7 +494,7 @@ After 60 seconds without a reliably correlated terminal outcome, return partial/
 
 **Verification**: Typed event-sequence fixtures cover live/history overlap and partial completion. README distinguishes local history, explicit backfill, initial sync settings and linked-device availability limits.
 
-- [ ] U10. **Reconcile receipts, edits, deletions and reactions**
+- [x] U10. **Reconcile receipts, edits, deletions and reactions**
 
 **Goal / requirements**: Accurate retained conversation state from lifecycle events; R10, R11.
 **Dependencies**: U8, U9.

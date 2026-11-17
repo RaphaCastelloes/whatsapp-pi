@@ -88,7 +88,7 @@ Automatic replies wait until tool results are available. They never reuse a stal
 
 An admitted batch and its pending preparation retain an account/auth scope and session generation. Account changes, logout or explicit stop discard stale unsubmitted work rather than submitting it through a new account. Same-account reconnects preserve admitted batch work; mapping results and callbacks from obsolete sockets are ignored. These guards do not recall a send that has already started.
 
-Every eligible batch item is considered. History/append events and request-ID-bearing resends do not trigger ordinary agent work. A delayed normal `notify` event without a request ID can still trigger work. Replay protection is bounded to 5,000 entries/24 hours in the running process; eviction/restart ends that protection. There is no durable agent-job replay, and a crash during handoff can lose a request. Retry manually by sending a fresh WhatsApp message, not by automatically resending an uncertain outbound send.
+Every eligible batch item is considered. History/append events and request-ID-bearing resends do not trigger ordinary agent work. A delayed normal `notify` event without a request ID can still trigger work. Replay protection is bounded to 5,000 entries/24 hours, with retained processing outcomes persisted in the selected account archive. Unfinished outcomes become interrupted on restart and are never automatically reissued; eviction ends that protection. There is no durable agent-job replay, and a crash during handoff can lose a request. Retry manually by sending a fresh WhatsApp message, not by automatically resending an uncertain outbound send.
 
 Ordinary incoming text ending in `π` is accepted. The legacy branding filter applies only to own-direction messages; registered outgoing IDs provide additional echo protection.
 
@@ -105,9 +105,10 @@ A successful socket send means **accepted**, not delivered/read by the recipient
 | `send_reaction` | React to a retained, unambiguous message key; optional `fromMe`/`participant` hints and compound emoji are supported. |
 | `list_wa_conversations` | Read recent conversation summaries, with filters for incoming and allowed chats. |
 | `get_wa_conversation_history` | Read recent messages for a sender number or JID. |
-| `check_wa_new_messages` | Find conversations whose latest message is incoming, optionally since a timestamp. |
+| `check_wa_new_messages` | Find conversations whose latest message is incoming, optionally since a timestamp, with an optional local `scope`. |
+| `request_wa_history` | Explicitly request up to 100 older messages for an allowed/bound chat, or read retained request status locally. |
 
-The three conversation lookup tools read the local recents store and do not access WhatsApp’s network or mark messages as read.
+The three inbox read tools use the selected local archive projection. They never fetch network history or mark messages as read. Defaults remain 20 items; `scope` selects a known local profile/account or `legacy-unassigned`. `list_wa_conversations` returns available scope IDs. `get_wa_conversation_history` also accepts an opaque `cursor` and returns `nextCursor` for older local pages, including equal-timestamp records.
 
 ## Sending Files and Native Replies
 
@@ -135,9 +136,31 @@ Both `send_wa_message` and `send_wa_media` accept an optional native quote:
 
 Own-message group quotes whose observed author is a LID are explicitly unavailable with Baileys rc14, which would otherwise rewrite that author to the account's phone JID. Incoming LID-author quotes and ordinary incoming/own PN quotes have native serialization coverage.
 
-Quote targets must be real, unambiguous messages retained by the current process in the same canonical chat. Add `participant` when needed for a group target. The original transport key is preserved, and configured send-number overrides cannot redirect a quote to another chat. Missing, deleted, unsupported or evicted targets fail explicitly; a requested quote is never silently omitted.
+Quote targets must be real, unambiguous messages retained in the current account's canonical chat. Add `participant` when needed for a group target. The original transport key is preserved, and configured send-number overrides cannot redirect a quote to another chat. Missing, deleted, unsupported or evicted targets fail explicitly; a requested quote is never silently omitted.
 
-The existing history/detail/reply UI now sends native quotes and displays unavailable targets. Quoting lasts only within the **500-message/24-hour memory window**, or earlier protocol expiry. Restarting loses this raw lookup; older recents alone cannot manufacture a quote. Comprehensive persistent history and lifecycle reconciliation remain outside this change.
+The history/detail/reply UI sends native quotes and displays unavailable targets. Full raw retry payloads remain memory-only within **500 messages/24 hours**, or earlier protocol expiry. Supported text/media quotes can instead use a retained secret-free projection after restart. Legacy recents, deleted/expired records and another account's local history view cannot manufacture a quote.
+
+## Local Archive, History and Lifecycle
+
+New ignored live senders retain at most 20 memory-only summary previews for 24 hours, scoped to the current account. Their content is not admitted to the new durable/quotable archive or raw retry cache.
+
+The authoritative archive is under `~/.pi/agent/extensions/whatsapp-pi/archive/`. Each relative auth-directory profile has a random storage-profile ID and a last-verified account marker. Offline reads use that known account without a socket. A different login opens a separate partition before ingestion; an empty new account never falls back to someone else's legacy history. `/whatsapp > Local history scope` selects another known account or the legacy view locally without changing the live ingestion account. Recents remain available while disconnected.
+
+Legacy `recents/recents.json` is not attributed to the next login. A one-time read-only `legacy-unassigned` import preserves existing labels/time/direction and an untouched `recents.json.pre-archive-backup`. The original recents file is not rewritten by the archive-backed projection. Legacy missing keys/content stay unknown and cannot supply quote/retry payloads.
+
+New records preserve exact visible text, emoji/newlines, observed keys, millisecond timestamps, quote links and lifecycle metadata. Persistent quote projections allow only original visible text/caption/filename/MIME and message identity. Media keys, download/direct URLs, raw context, thumbnails, attachment bytes, auth and app-state secrets are excluded. View-once content is excluded, and disappearing expiry wins over archive retention. This does not erase existing Pi transcripts, logs or downloaded files.
+
+Retention is **1,000 records per conversation, 30 days maximum age and 100 MiB per account partition including control metadata**. Serialized mutations use a single writer and same-directory atomic replacement, with owner-only files/backups (`0600`) and directories (`0700`) where supported. Concurrent writers for one partition are unsupported and rejected with a lock. Stale locks are reclaimed only when the recorded PID no longer exists. Corrupt/future-version stores and filesystem failures produce explicit degraded state, never an automatic reset. Stop other writers, preserve originals and investigate permissions/schema before recovery. Do not delete or replace an archive while a writer is running.
+
+History network work requires an explicit `request_wa_history` call, a connected allowed/bound chat and a complete retained oldest-message anchor. Each request asks for 1–100 messages, with one active request per chat. Results start pending; a returned request ID is not returned history. Imported messages never trigger Pi prompts, document parsing, transcription or attachment downloads. Broader initial history sync is opt-in via `--whatsapp-history-full`; the default remains `syncFullHistory: false`, and authorization/retention limits still apply.
+
+Correlation uses the installed Baileys fields: `peerDataRequestSessionId`, `syncType`, `progress`, `chunkOrder`, and upsert `requestId`. Native rc14 deliberately omits `isLatest` for on-demand chunks. Only an exact matching peer request ID with on-demand progress `100` completes that request. Global `messaging-history.status`, even explicit completion, has no request ID and cannot complete every pending request. After 60 seconds without correlated completion, status becomes unknown; disconnect/restart interrupts pending work without resubmission. Retained status lasts at most 24 hours/100 requests. Late authorized chunks may still import, but cannot bypass expiry, admission floors or account guards. WhatsApp/device availability can prevent full history retrieval.
+
+Receipts, edits, revokes, local removals and participant reactions update the same records without ordinary agent prompts. Send acceptance is separate from server/delivery/read/playback observations. Group receipts remain per participant; missing/privacy-suppressed receipts stay unknown. The detail view and local tools expose observed status, edited/deleted markers, reactions and incomplete knowledge. Before-base updates are bounded to 500 entries/24 hours; losing required events is reported as incomplete rather than promising unlimited convergence.
+
+Up to 5,000 content-free tombstones protect deletions for the accepted history window plus a day. Before protective metadata is evicted, monotonic conversation admission floors (or a conservative account-wide floor under byte pressure) reject covered older content on every ingest path, including delayed live notifications. Local chat deletion advances its floor to the observation time. Increasing retention does not lower a floor. Pressure can therefore reduce available history; it does not silently allow deleted content to resurrect. No outbound edit/delete/admin tool is added.
+
+**Rollback:** stop the extension, preserve the new archive, and restore the old code and preserved old recents snapshot only after explicitly acknowledging that old code will not display post-migration messages. This is not a lossless downgrade and there is no automatic downgrade exporter. Leave the new archive untouched for recovery/re-upgrade. No real rollback or auth migration is performed by automated tests.
 
 ## Run on Ubuntu at login
 

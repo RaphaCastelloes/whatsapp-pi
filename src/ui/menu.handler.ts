@@ -55,6 +55,11 @@ export class MenuHandler {
             options.push(logoffDeleteSessionLabel);
         }
 
+        const historyScopeLabel = t('archive.menu.scope');
+        if (this.recentsService.getArchiveState?.()?.enabled) {
+            if (status !== 'connected') options.push(recentsLabel);
+            options.push(historyScopeLabel);
+        }
         options.push(backLabel);
 
         const choice = await ctx.ui.select(title, options);
@@ -96,6 +101,17 @@ export class MenuHandler {
             case recentsLabel:
                 await this.manageRecents(ctx);
                 break;
+            case historyScopeLabel: {
+                const scopes = await this.recentsService.getHistoryScopes();
+                const current = t('archive.menu.current');
+                const entries = scopes.map(scope => ({ scope, label: `${scope.profile}: ${scope.account ?? 'legacy-unassigned'} (${scope.id.slice(0, 8)})` }));
+                const selected = await ctx.ui.select(historyScopeLabel, [current, ...entries.map(entry => entry.label), backLabel]);
+                if (selected && selected !== backLabel) {
+                    await this.recentsService.selectHistoryScope(selected === current ? undefined : entries.find(entry => entry.label === selected)?.scope.id);
+                    await this.manageRecents(ctx);
+                }
+                break;
+            }
         }
     }
 
@@ -559,7 +575,10 @@ export class MenuHandler {
         displayName: string,
         senderName?: string
     ) {
-        const history = await this.recentsService.getConversationHistory(senderNumber);
+        const archived = this.recentsService.getArchiveState?.()?.enabled;
+        const initialPage = archived ? await this.recentsService.getHistoryPage(senderNumber) : undefined;
+        const history = initialPage?.messages ?? await this.recentsService.getConversationHistory(senderNumber);
+        let cursor = initialPage?.nextCursor;
 
         if (history.length === 0) {
             ctx.ui.notify(t('menu.recents.history.empty'), 'info');
@@ -579,7 +598,7 @@ export class MenuHandler {
             const choice = await ctx.ui.select(t('menu.recents.history.title', { displayName }), [
                 ...historyOptions.map(option => option.label),
                 ...(page > 0 ? [previousLabel] : []),
-                ...(start + pageSize < sortedHistory.length ? [nextLabel] : []),
+                ...(start + pageSize < sortedHistory.length || cursor ? [nextLabel] : []),
                 backLabel
             ]);
 
@@ -588,6 +607,11 @@ export class MenuHandler {
             }
 
             if (choice === nextLabel) {
+                if (start + pageSize >= sortedHistory.length && cursor) {
+                    const older = await this.recentsService.getHistoryPage(senderNumber, { cursor });
+                    sortedHistory.push(...this.sortHistoryByMostRecent(older.messages));
+                    cursor = older.nextCursor;
+                }
                 page += 1;
                 continue;
             }
@@ -602,10 +626,12 @@ export class MenuHandler {
                 return;
             }
 
-            const quoteAvailable = Boolean(this.whatsappService.getQuotedMessage(selectedMessage.senderNumber, {
-                messageId: selectedMessage.messageId, fromMe: selectedMessage.direction === 'outgoing'
+            const quoteAvailable = selectedMessage.quoteAvailable !== false && Boolean(this.whatsappService.getQuotedMessage(selectedMessage.senderNumber, {
+                messageId: selectedMessage.messageId, fromMe: selectedMessage.direction === 'outgoing',
+                scope: selectedMessage.historyScope, participant: selectedMessage.key?.participant ?? undefined
             }));
             const detailAction = await showMessageDetailView(ctx, {
+                ...selectedMessage,
                 quoteAvailable,
                 title: t('menu.recents.history.messageTitle', { displayName }),
                 messageId: selectedMessage.messageId,
@@ -619,6 +645,7 @@ export class MenuHandler {
             if (detailAction === 'reply') {
                 await showMessageReplyView(ctx, {
                     selectedMessage: {
+                        ...selectedMessage,
                         messageId: selectedMessage.messageId,
                         senderNumber: selectedMessage.senderNumber,
                         senderName,
