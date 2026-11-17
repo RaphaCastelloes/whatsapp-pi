@@ -37,6 +37,8 @@ pi install npm:whatsapp-pi
 3. Add the contact or group that should be able to trigger Pi under **Allowed Contacts** or **Allowed Groups**.
 4. Send a message from that chat. Pi replies in the same conversation.
 
+Windows Terminal 1.22 or later displays a smaller pairing QR code. If your terminal cannot display it, set `WHATSAPP_PI_QR_TEXT=1` to use the text QR instead.
+
 After pairing, `pi --whatsapp-pi-online` starts with automatic connection when saved credentials are available. To bind this Pi instance to one group, pass its JID with `--whatsapp-group <jid>`.
 
 ### Voice-note transcription (optional)

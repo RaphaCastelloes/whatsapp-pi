@@ -4,7 +4,7 @@ import { validatePhoneNumber, type RecentConversationMessage, type RecentConvers
 import { RecentsService } from '../services/recents.service.js';
 import { showMessageDetailView } from './message-detail.view.js';
 import { showMessageReplyView } from './message-reply.view.js';
-import * as qrcode from 'qrcode-terminal';
+import { printPairingQr } from './pairing-qr.js';
 import type { ExtensionCommandContext } from '@mariozechner/pi-coding-agent';
 import { t } from '../i18n.js';
 
@@ -70,9 +70,7 @@ export class MenuHandler {
                     ctx.ui.notify(t('menu.root.alreadyConnected'), 'info');
                     break;
                 }
-                this.whatsappService.setQRCodeCallback((qr) => {
-                    qrcode.generate(qr, { small: true });
-                });
+                this.whatsappService.setQRCodeCallback(printPairingQr);
                 await this.whatsappService.start();
                 ctx.ui.notify(registered ? t('menu.root.reconnectStarted') : t('menu.root.pairingStarted'), 'info');
                 break;

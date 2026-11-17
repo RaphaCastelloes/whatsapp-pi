@@ -3,6 +3,7 @@ import { MenuHandler } from '../../src/ui/menu.handler.ts';
 import { resetI18n } from '../../src/i18n.ts';
 import { showMessageDetailView } from '../../src/ui/message-detail.view.ts';
 import { showMessageReplyView } from '../../src/ui/message-reply.view.ts';
+import * as qrcode from 'qrcode-terminal';
 
 vi.mock('qrcode-terminal', () => ({
     generate: vi.fn()
@@ -103,6 +104,8 @@ describe('MenuHandler', () => {
         await handler.handleCommand(ctx as any);
 
         expect(whatsappService.setQRCodeCallback).toHaveBeenCalledOnce();
+        whatsappService.setQRCodeCallback.mock.calls[0][0]('pairing-payload');
+        expect(qrcode.generate).toHaveBeenCalledWith('pairing-payload', { small: true }, expect.any(Function));
         expect(whatsappService.start).toHaveBeenCalledOnce();
         expect(ctx.ui.notify).toHaveBeenCalledWith('WhatsApp Pairing Started', 'info');
     });
