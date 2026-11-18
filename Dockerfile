@@ -18,7 +18,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates ffmpeg git ripgrep python3 make g++ libgomp1 \
+        ca-certificates ffmpeg git ripgrep python3 make g++ libgomp1 tmux \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node /usr/local/ /usr/local/
@@ -59,11 +59,38 @@ web_version_matches() {
 if ! installed pi-web-access || ! web_version_matches; then
     pi install "npm:pi-web-access@$PI_WEB_ACCESS_VERSION" || echo "pi-web-access install failed" >&2
 fi
-if installed whatsapp-pi; then
+if ! installed whatsapp-pi; then
+    echo "whatsapp-pi unavailable; starting pi without it" >&2
+    set --
+fi
+
+# Preserve docker attach for interactive containers; provide a terminal on
+# platforms such as Railway that start the container without one.
+if [ -t 0 ] && [ -t 1 ]; then
     exec pi "$@"
 fi
-echo "whatsapp-pi unavailable; starting pi without it" >&2
-exec pi
+
+session=whatsapp-pi
+tmux new-session -d -s "$session" -x 120 -y 40 pi "$@" || exit 1
+echo "Pi started in tmux session '$session'. Attach with: tmux attach -t $session"
+
+shutdown() {
+    pane_pid=$(tmux display-message -p -t "$session" '#{pane_pid}' 2>/dev/null) || pane_pid=
+    [ -z "$pane_pid" ] || kill -TERM "$pane_pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+        tmux has-session -t "$session" 2>/dev/null || exit 0
+        sleep 1
+    done
+    tmux kill-session -t "$session" 2>/dev/null || true
+    exit 0
+}
+trap shutdown TERM INT
+
+while tmux has-session -t "$session" 2>/dev/null; do
+    sleep 2
+done
+echo "Pi exited; stopping container." >&2
+exit 1
 EOF
 
 ENTRYPOINT ["/home/ubuntu/entrypoint.sh"]

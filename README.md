@@ -183,6 +183,18 @@ The Compose file also runs [Portainer CE](https://www.portainer.io/) for contain
 
 The image uses Ubuntu 24.04, Node.js 22, Pi 1.5.2 and `pi-web-access` 0.48.0. It installs the published extension with `pi install npm:whatsapp-pi`; rebuilding does not include unpublished checkout changes. To update the extension later, run `docker compose exec whatsapp-pi pi update npm:whatsapp-pi` and restart the service. The startup script restores the pinned `pi-web-access` version if the persisted installation differs. FFmpeg and a static `whisper-cli` build are included; the Whisper model (~142 MB) downloads on the first audio message and is stored in the `pi-data` volume. The WhatsApp service publishes no inbound ports; the container needs outbound access to WhatsApp and the model provider.
 
+### Railway
+
+Deploy the repository using its Dockerfile, without overriding the start command. When started without a terminal, the container runs Pi inside a `whatsapp-pi` tmux session.
+
+1. Attach a Railway volume at `/home/ubuntu/.pi` to persist Pi settings, WhatsApp credentials and conversation data. Railway mounts volumes as root; set `RAILWAY_RUN_UID=0` in the service variables so the container can write to it. This runs Pi as root inside the container, so allow only trusted chats and do not expose the terminal publicly.
+2. Set a model provider variable such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and redeploy. Keep one instance of the service.
+3. Install the [Railway CLI](https://docs.railway.com/cli), then run `railway login`, `railway link`, and `railway ssh --service whatsapp-pi`.
+4. In the container, run `tmux attach -t whatsapp-pi`. Use `/whatsapp` to pair the account and allow the chats that can trigger Pi.
+5. Detach without stopping Pi with `Ctrl-b`, then `d`. Run `exit` to close the SSH shell; use the same SSH and tmux commands to reconnect.
+
+Railway supports one volume per service; `/workspace` is not persisted by the volume above. The service needs no public domain or HTTP health check. If it exits, check its deploy logs with `railway logs --service whatsapp-pi --latest --lines 100`. If the tmux session cannot be found over SSH, check that SSH and the container process use the same user.
+
 ## Run on Ubuntu at login
 
 The optional systemd user service installer requires `tmux`, `systemd`, and an installed `pi` command. From a checkout:
