@@ -1,5 +1,5 @@
 import type { ReplyDraft, ReplySendResult, SelectedMessageContext, QuoteTarget } from '../models/whatsapp.types.js';
-import { truncateToWidth } from '@mariozechner/pi-tui';
+import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { WhatsAppService } from '../services/whatsapp.service.js';
 import type { RecentsService } from '../services/recents.service.js';
 import { t } from '../i18n.js';

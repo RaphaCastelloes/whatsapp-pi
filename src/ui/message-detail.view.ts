@@ -1,4 +1,4 @@
-import { matchesKey, truncateToWidth, wrapTextWithAnsi, visibleWidth } from '@mariozechner/pi-tui';
+import { matchesKey, truncateToWidth, wrapTextWithAnsi, visibleWidth } from '@earendil-works/pi-tui';
 import type { SelectedMessageContext } from '../models/whatsapp.types.js';
 import { t } from '../i18n.js';
 

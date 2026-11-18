@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-    AuthStorage, createAgentSession, DefaultResourceLoader,
+    ModelRuntime, createAgentSession, DefaultResourceLoader,
     SessionManager, SettingsManager, type ExtensionAPI
-} from '@mariozechner/pi-coding-agent';
-import { createAssistantMessageEventStream, getModel, type AssistantMessage } from '@mariozechner/pi-ai';
+} from '@earendil-works/pi-coding-agent';
+import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import { ConversationRouter } from '../../src/services/conversation-router.service.ts';
 
 const image = {
@@ -15,6 +15,25 @@ const image = {
 };
 
 describe('declared Pi SDK sidecar compatibility', () => {
+    it('loads the WhatsApp extension and registers its tools with the current Pi loader', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'whatsapp-pi-loader-'));
+        try {
+            const loader = new DefaultResourceLoader({
+                cwd: root, agentDir: root, settingsManager: SettingsManager.inMemory(),
+                noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+                additionalExtensionPaths: [join(process.cwd(), 'whatsapp-pi.ts')]
+            });
+            await loader.reload();
+            const { extensions, errors } = loader.getExtensions();
+            expect(errors).toEqual([]);
+            expect(extensions).toHaveLength(1);
+            expect(extensions[0].commands.has('whatsapp')).toBe(true);
+            expect(extensions[0].tools.has('send_wa_message')).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 15_000);
+
     it('uses the real user-input pipeline with policy blocking, transformation and image ownership', async () => {
         const root = await mkdtemp(join(tmpdir(), 'whatsapp-pi-sdk-'));
         const router = new ConversationRouter();
@@ -23,8 +42,8 @@ describe('declared Pi SDK sidecar compatibility', () => {
         let api!: ExtensionAPI;
         let finishRun: (() => void) | undefined;
         const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
-        const auth = AuthStorage.inMemory();
-        auth.setRuntimeApiKey('openai', 'offline-fixture-not-a-credential');
+        const modelRuntime = await ModelRuntime.create({ authPath: join(root, 'auth.json'), modelsPath: null, refreshOnCreate: false });
+        await modelRuntime.setRuntimeApiKey('openai', 'offline-fixture-not-a-credential');
         const loader = new DefaultResourceLoader({
             cwd: root, agentDir: root, settingsManager: settings,
             noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
@@ -51,10 +70,10 @@ describe('declared Pi SDK sidecar compatibility', () => {
         const { session } = await createAgentSession({
             cwd: root, agentDir: root, resourceLoader: loader,
             sessionManager: SessionManager.inMemory(), settingsManager: settings,
-            authStorage: auth, model: getModel('openai', 'gpt-4o-mini'), tools: []
+            modelRuntime, model: modelRuntime.getModel('openai', 'gpt-4o-mini'), tools: []
         });
         try {
-            session.agent.streamFn = model => {
+            session.agent.streamFunction = model => {
                 const stream = createAssistantMessageEventStream();
                 const message: AssistantMessage = {
                     role: 'assistant', api: model.api, provider: model.provider, model: model.id,

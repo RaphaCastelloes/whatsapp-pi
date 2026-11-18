@@ -5,7 +5,7 @@ import { RecentsService } from '../services/recents.service.js';
 import { showMessageDetailView } from './message-detail.view.js';
 import { showMessageReplyView } from './message-reply.view.js';
 import { printPairingQr } from './pairing-qr.js';
-import type { ExtensionCommandContext } from '@mariozechner/pi-coding-agent';
+import type { ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { t } from '../i18n.js';
 
 interface HistoryOptionEntry {

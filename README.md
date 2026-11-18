@@ -21,7 +21,7 @@ WhatsApp-Pi connects [Pi Coding Agent](https://pi.dev) to WhatsApp. Chat with yo
 ## Requirements
 
 - [Pi Coding Agent](https://pi.dev) and a configured model provider. Use `/login` in Pi or configure the provider’s API key.
-- Node.js 20+ when installing Pi through npm or developing locally.
+- Node.js 22.19+ when installing current Pi through npm or developing locally.
 - For voice-note transcription: FFmpeg and a built Whisper.cpp `whisper-cli`. Other features do not require the Whisper CLI.
 
 Install Pi using the [official instructions](https://pi.dev/docs/latest), then install this extension:
@@ -163,6 +163,25 @@ Receipts, edits, revokes, local removals and participant reactions update the sa
 Up to 5,000 content-free tombstones protect deletions for the accepted history window plus a day. Before protective metadata is evicted, monotonic conversation admission floors (or a conservative account-wide floor under byte pressure) reject covered older content on every ingest path, including delayed live notifications. Local chat deletion advances its floor to the observation time. Increasing retention does not lower a floor. Pressure can therefore reduce available history; it does not silently allow deleted content to resurrect. No outbound edit/delete/admin tool is added.
 
 **Rollback:** stop the extension, preserve the new archive, and restore the old code and preserved old recents snapshot only after explicitly acknowledging that old code will not display post-migration messages. This is not a lossless downgrade and there is no automatic downgrade exporter. Leave the new archive untouched for recovery/re-upgrade. No real rollback or auth migration is performed by automated tests.
+
+## Run with Docker
+
+Docker Engine and the Docker Compose plugin are required. From a checkout:
+
+```sh
+docker compose up -d --build
+docker attach $(docker compose ps -q whatsapp-pi)
+```
+
+The container runs Pi's interactive terminal. Configure a model provider with `/login`, or set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in your host environment before starting Compose. For OAuth logins that redirect to localhost, copy the full redirect URL from the browser and paste it into Pi's login prompt; the callback server runs inside the container. Keep that URL private. To pass another provider's environment variable, add it to the `environment` list in `compose.yaml` and recreate the container.
+
+In Pi, run `/whatsapp`, connect and scan the QR code, then add the contacts or groups allowed to trigger the agent. The startup flag reconnects automatically on subsequent starts after pairing. Detach without stopping Pi using Docker's default `Ctrl-p`, `Ctrl-q` sequence; reattach using the `docker attach` command above. Use `docker compose stop` and `docker compose start` to stop and restart it.
+
+The `pi-data` volume contains Pi settings, provider credentials, WhatsApp authentication, conversation data, and media. The `workspace` volume is the agent's working directory. Both persist when the container is recreated; protect them as sensitive data and avoid `docker compose down --volumes` unless you intend to delete them. Do not run multiple instances against the same Pi data volume. Pi can read and modify the workspace, so allow only trusted chats and mount only files the agent should access.
+
+The Compose file also runs [Portainer CE](https://www.portainer.io/) for container management. Open `https://localhost:9444` after the first start and create the administrator account. Portainer mounts the Docker socket and therefore has administrator-level access to Docker; it is bound to localhost only.
+
+The image uses Ubuntu 24.04, Node.js 22, Pi 1.5.2 and `pi-web-access` 0.48.0. It installs the published extension with `pi install npm:whatsapp-pi`; rebuilding does not include unpublished checkout changes. To update the extension later, run `docker compose exec whatsapp-pi pi update npm:whatsapp-pi` and restart the service. The startup script restores the pinned `pi-web-access` version if the persisted installation differs. FFmpeg and a static `whisper-cli` build are included; the Whisper model (~142 MB) downloads on the first audio message and is stored in the `pi-data` volume. The WhatsApp service publishes no inbound ports; the container needs outbound access to WhatsApp and the model provider.
 
 ## Run on Ubuntu at login
 

@@ -1,0 +1,28 @@
+services:
+  whatsapp-pi:
+    build: .
+    init: true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    environment:
+      - TERM=xterm-256color
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+    volumes:
+      - pi-data:/home/ubuntu/.pi
+      - workspace:/workspace
+
+  portainer:
+    image: portainer/portainer-ce:lts
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9444:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+
+volumes:
+  pi-data:
+  workspace:
+  portainer-data:

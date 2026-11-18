@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { SessionManager } from './src/services/session.manager.js';
 import { WhatsAppService } from './src/services/whatsapp.service.js';
 import { MenuHandler } from './src/ui/menu.handler.js';
