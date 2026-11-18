@@ -15,7 +15,8 @@ RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper
 
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates ffmpeg git ripgrep python3 make g++ libgomp1 tmux \
@@ -24,6 +25,12 @@ RUN apt-get update \
 COPY --from=node /usr/local/ /usr/local/
 COPY --from=whisper-build /tmp/whisper.cpp/build/bin/whisper-cli /opt/whisper/whisper-cli
 ENV WHISPER_CLI_PATH=/opt/whisper/whisper-cli
+
+COPY --chmod=755 <<'EOF' /usr/local/bin/whatsapp-pi-attach
+#!/bin/sh
+export LC_ALL=C.UTF-8
+exec /usr/bin/tmux -u attach-session -t whatsapp-pi
+EOF
 
 ARG PI_VERSION=1.5.2
 RUN npm install --global --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VERSION}"
@@ -72,7 +79,7 @@ fi
 
 session=whatsapp-pi
 tmux new-session -d -s "$session" -x 120 -y 40 pi "$@" || exit 1
-echo "Pi started in tmux session '$session'. Attach with: tmux -u attach -t $session"
+echo "Pi started in tmux session '$session'. Attach with: whatsapp-pi-attach"
 
 shutdown() {
     pane_pid=$(tmux display-message -p -t "$session" '#{pane_pid}' 2>/dev/null) || pane_pid=

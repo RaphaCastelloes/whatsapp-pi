@@ -190,10 +190,10 @@ Deploy the repository using its Dockerfile, without overriding the start command
 1. Attach a Railway volume at `/home/ubuntu/.pi` to persist Pi settings, WhatsApp credentials and conversation data. Railway mounts volumes as root; set `RAILWAY_RUN_UID=0` in the service variables so the container can write to it. This runs Pi as root inside the container, so allow only trusted chats and do not expose the terminal publicly.
 2. Set a model provider variable such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and redeploy. Keep one instance of the service.
 3. Install the [Railway CLI](https://docs.railway.com/cli), then run `railway login`, `railway link`, and `railway ssh --service whatsapp-pi`.
-4. In the container, run `tmux -u attach -t whatsapp-pi`. The `-u` flag ensures Unicode QR blocks display correctly even if the SSH shell's locale is not UTF-8. Use `/whatsapp` to pair the account and allow the chats that can trigger Pi.
+4. In the container, run `whatsapp-pi-attach`. This attaches with a UTF-8 locale so the QR code displays correctly even if the SSH shell's locale is not UTF-8. Use `/whatsapp` to pair the account and allow the chats that can trigger Pi.
 5. Detach without stopping Pi with `Ctrl-b`, then `d`. Run `exit` to close the SSH shell; use the same SSH and tmux commands to reconnect.
 
-Railway supports one volume per service; `/workspace` is not persisted by the volume above. The service needs no public domain or HTTP health check. If it exits, check its deploy logs with `railway logs --service whatsapp-pi --latest --lines 100`. If the tmux session cannot be found over SSH, check that SSH and the container process use the same user.
+Railway supports one volume per service; `/workspace` is not persisted by the volume above. The service needs no public domain or HTTP health check. If it exits, check its deploy logs with `railway logs --service whatsapp-pi --latest --lines 100`. If the tmux session cannot be found over SSH, check that SSH and the container process use the same user. On an older image without `whatsapp-pi-attach`, use `LC_ALL=C.UTF-8 tmux -u attach -t whatsapp-pi` instead.
 
 ## Run on Ubuntu at login
 
