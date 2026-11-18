@@ -72,7 +72,7 @@ fi
 
 session=whatsapp-pi
 tmux new-session -d -s "$session" -x 120 -y 40 pi "$@" || exit 1
-echo "Pi started in tmux session '$session'. Attach with: tmux attach -t $session"
+echo "Pi started in tmux session '$session'. Attach with: tmux -u attach -t $session"
 
 shutdown() {
     pane_pid=$(tmux display-message -p -t "$session" '#{pane_pid}' 2>/dev/null) || pane_pid=
