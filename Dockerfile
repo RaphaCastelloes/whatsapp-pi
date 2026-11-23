@@ -46,7 +46,8 @@ WORKDIR /workspace
 
 ENV PI_WEB_ACCESS_VERSION=0.48.0
 RUN pi install npm:whatsapp-pi \
-    && pi install "npm:pi-web-access@${PI_WEB_ACCESS_VERSION}"
+    && pi install "npm:pi-web-access@${PI_WEB_ACCESS_VERSION}" \
+    && pi install npm:pi-schedule-prompt
 
 # Self-healing entrypoint: installs any missing extension before starting
 # Pi (e.g. an existing volume hiding the image's ~/.pi).
@@ -54,6 +55,7 @@ COPY --chmod=755 <<'EOF' /home/ubuntu/entrypoint.sh
 #!/bin/sh
 installed() { pi list 2>/dev/null | grep -q "$1"; }
 installed whatsapp-pi || pi install npm:whatsapp-pi || true
+installed pi-schedule-prompt || pi install npm:pi-schedule-prompt || echo "pi-schedule-prompt install failed" >&2
 web_version_matches() {
     node -e 'const fs = require("node:fs");
         const managed = process.env.HOME + "/.pi/agent/npm/node_modules/pi-web-access/package.json";
