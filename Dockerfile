@@ -26,6 +26,13 @@ COPY --from=node /usr/local/ /usr/local/
 COPY --from=whisper-build /tmp/whisper.cpp/build/bin/whisper-cli /opt/whisper/whisper-cli
 ENV WHISPER_CLI_PATH=/opt/whisper/whisper-cli
 
+# Keep container-wide instructions outside persistent volumes.
+COPY <<'EOF' /AGENTS.md
+# Reference Time Zone
+
+Use GMT-3 (Brasilia, DF, Brazil) as the reference time zone.
+EOF
+
 COPY --chmod=755 <<'EOF' /usr/local/bin/whatsapp-pi-attach
 #!/bin/sh
 export LC_ALL=C.UTF-8
