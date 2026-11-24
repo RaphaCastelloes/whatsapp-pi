@@ -9,6 +9,10 @@
 
 WhatsApp-Pi connects [Pi Coding Agent](https://pi.dev) to WhatsApp. Chat with your Pi agent from an allowed contact or group, browse local conversation history, and let Pi send messages or reactions.
 
+## WhatsApp-Pi Group
+
+Join the [Whatspp-pi Group](https://chat.whatsapp.com/DVH9RgHgzr25KxBgTeGkwj?s=sh&p=a&iam=2) on WhatsApp to connect with the community, ask questions, and share ideas.
+
 ## Features
 
 - Pair a WhatsApp account with a QR code; credentials persist locally.
