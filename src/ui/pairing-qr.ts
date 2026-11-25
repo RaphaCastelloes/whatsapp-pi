@@ -2,7 +2,7 @@ import * as qrcode from 'qrcode-terminal';
 
 // Windows Terminal maps sixel pixels to a 10-by-20 virtual text cell.
 const MODULE_SIZE = 4;
-const QUIET_ZONE = 3;
+const QUIET_ZONE = 4;
 
 function toSixel(text: string): string | undefined {
     const lines = text.replace(/\n$/, '').split('\n');

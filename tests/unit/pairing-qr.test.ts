@@ -19,7 +19,7 @@ describe('pairing QR', () => {
         else Reflect.deleteProperty(process.stdout, 'isTTY');
     });
 
-    it('renders all QR modules at half the Windows Terminal cell size with a white margin', () => {
+    it('renders all QR modules with a four-module white margin', () => {
         vi.stubEnv('WT_SESSION', 'test');
         vi.stubEnv('TERM_PROGRAM', '');
         vi.stubEnv('TMUX', '');
@@ -39,7 +39,7 @@ describe('pairing QR', () => {
         expect(Number(match![2])).toBe(size);
         const lines = textQr().split('\n');
         const width = lines[0].length - 2;
-        expect(size).toBe((width + 8) * 5);
+        expect(size).toBe((width + 8) * 4);
 
         const pixels = Array.from({ length: size }, () => Array<boolean>(size).fill(false));
         const bands = match![3].split('-').filter(Boolean);
@@ -56,8 +56,8 @@ describe('pairing QR', () => {
 
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const row = Math.floor(y / 5) - 4;
-                const col = Math.floor(x / 5) - 4;
+                const row = Math.floor(y / 4) - 4;
+                const col = Math.floor(x / 4) - 4;
                 const char = row >= 0 && row < width && col >= 0 && col < width
                     ? lines[1 + Math.floor(row / 2)][1 + col]
                     : '\u2588';

@@ -59,13 +59,26 @@ describe('OutgoingMediaService file egress', () => {
         const limited = new OutgoingMediaService({ workspaceRoot: workspace, mediaRoot: media, maxBytes: 8 });
         await expect(limited.prepare({ path: file, type: 'document' })).rejects.toThrow();
     });
-    it('rejects outside roots and symlinks escaping a permitted root', async () => {
+    it('rejects paths outside permitted roots', async () => {
         const outside = join(root, 'outside.txt');
         await writeFile(outside, 'not approved');
-        await symlink(outside, join(workspace, 'escape.txt'));
-        for (const path of [outside, join(workspace, '../outside.txt'), join(workspace, 'escape.txt')]) {
+        for (const path of [outside, join(workspace, '../outside.txt')]) {
             await expect(service.prepare({ path, type: 'document' })).rejects.toThrow();
         }
+    });
+    it('rejects symlinks escaping a permitted root', async ({ skip }) => {
+        const outside = join(root, 'outside.txt');
+        await writeFile(outside, 'not approved');
+        const link = join(workspace, 'escape.txt');
+        try {
+            await symlink(outside, link);
+        } catch (error) {
+            if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+                skip('Creating symlinks requires Windows privileges or Developer Mode');
+            }
+            throw error;
+        }
+        await expect(service.prepare({ path: link, type: 'document' })).rejects.toThrow();
     });
     it('rejects credential names, auth folders and disguised private keys', async () => {
         await mkdir(join(workspace, 'auth'));

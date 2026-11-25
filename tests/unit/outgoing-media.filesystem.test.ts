@@ -23,26 +23,39 @@ describe('opened-file authority and nonregular inputs', () => {
         root = await mkdtemp(join(tmpdir(), 'wa-fs-test-'));
     });
     afterEach(async () => { await rm(root, { recursive: true, force: true }); });
-    it('rejects an ancestor swapped to an outside symlink between validation and open', async () => {
+    it('rejects an ancestor swapped to an outside symlink between validation and open', async ({ skip }) => {
         const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
         const workspace = join(root, 'workspace');
         const inside = join(workspace, 'export');
         const outside = join(root, 'outside');
         await mkdir(inside, { recursive: true });
         await mkdir(outside);
+        const probe = join(root, 'symlink-probe');
+        try {
+            await symlink(outside, probe, 'dir');
+        } catch (error) {
+            if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+                skip('Creating symlinks requires Windows privileges or Developer Mode');
+            }
+            throw error;
+        }
+        await unlink(probe);
         const file = join(inside, 'report.json');
         await writeFile(file, '{"fixture":"inside"}');
         await writeFile(join(outside, 'report.json'), '{"fixture":"outside-not-a-real-credential"}');
         const canonical = await realpath(file);
+        let swapped = false;
         mocks.open.mockImplementationOnce(async (path, flags, mode) => {
             expect(path).toBe(canonical);
             await rename(inside, inside + '.saved');
             await symlink(outside, inside, 'dir');
+            swapped = true;
             return original.open(path, flags, mode);
         });
         const pending = new OutgoingMediaService({ workspaceRoot: workspace }).prepare({ path: file, type: 'document' });
         try {
             await expect(pending).rejects.toThrow();
+            expect(swapped).toBe(true);
         } finally {
             await pending.then(value => value.dispose(), () => {});
         }

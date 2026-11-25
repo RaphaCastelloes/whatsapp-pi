@@ -26,7 +26,6 @@ describe('authoritative archive and offline partitions', () => {
         const path = store.getArchiveState().path!;
         const serialized = await readFile(path, 'utf8');
         expect(serialized).not.toMatch(/SECRET|mediaKey|directPath|jpegThumbnail|quotedMessage/);
-        expect((await stat(path)).mode & 0o777).toBe(0o600);
         await store.close();
         const restarted = await open(options);
         expect(restarted.listRecords()[0].text).toBe('  hi 👋\n😊  ');
@@ -34,6 +33,16 @@ describe('authoritative archive and offline partitions', () => {
         expect(restarted.getForTransport(key)).toBeUndefined();
         expect(restarted.getProcessing(key)).toBe('interrupted');
         await restarted.close();
+    });
+    it.skipIf(process.platform === 'win32')('restricts archive files and directory to the owner', async () => {
+        const options = await fixture(); const store = await open(options);
+        try {
+            await store.activate('self', 'scope');
+            expect((await stat(options.root)).mode & 0o777).toBe(0o700);
+            expect((await stat(store.getArchiveState().path!)).mode & 0o777).toBe(0o600);
+        } finally {
+            await store.close();
+        }
     });
     it('imports legacy once, read-only and unassigned; never adopts it on first verified login', async () => {
         const options = await fixture();
