@@ -73,7 +73,6 @@ const mocks = vi.hoisted(() => {
         incomingMediaService: createIncomingMediaService(),
         extractIncomingText: vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' }),
         childPrompt: vi.fn().mockResolvedValue(undefined),
-        childCompact: vi.fn().mockResolvedValue(undefined),
         reset() {
             this.sessionManager = createSessionManager();
             this.whatsappService = createWhatsAppService();
@@ -82,7 +81,6 @@ const mocks = vi.hoisted(() => {
             this.incomingMediaService = createIncomingMediaService();
             this.extractIncomingText = vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' });
             this.childPrompt = vi.fn().mockResolvedValue(undefined);
-            this.childCompact = vi.fn().mockResolvedValue(undefined);
         }
     };
 });
@@ -102,11 +100,10 @@ vi.mock('../../src/services/isolated-session.service.ts', () => ({
                 if (!isCurrent()) throw new Error('stale');
                 return work({
                     workspace: 'isolated-workspace',
-                    session: { prompt: mocks.childPrompt, compact: mocks.childCompact, messages: [] }
+                    session: { prompt: mocks.childPrompt, messages: [] }
                 }, isCurrent);
             });
         }
-        hasSession = vi.fn().mockResolvedValue(true);
         shutdown = vi.fn().mockResolvedValue(undefined);
     }
 }));
@@ -467,11 +464,12 @@ describe('whatsapp-pi extension', () => {
         expect(pi.sendUserMessage).not.toHaveBeenCalled();
     });
 
-    it('executes /compact commands received from WhatsApp', async () => {
+    it.each(['/abort', '/compact'])('treats %s as ordinary WhatsApp text', async text => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
         const ctx = createMockContext();
-        mocks.extractIncomingText.mockReturnValue({ kind: 'text', text: '/compact' });
+        mocks.extractIncomingText.mockReturnValue({ kind: 'text', text });
+        mocks.incomingMediaService.process.mockResolvedValue({ text });
 
         registerExtension(pi as any);
         await pi.handlers.get('session_start')!({ reason: 'manual' }, ctx);
@@ -486,17 +484,17 @@ describe('whatsapp-pi extension', () => {
             pushName: 'Ana',
             senderNumber: '+5511999998888',
             sessionContext: { accountScope: 'fixture-account', generation: 1 },
-            message: { conversation: '/compact' }
+            message: { conversation: text }
         });
 
-        await vi.waitFor(() => expect(mocks.childCompact).toHaveBeenCalledOnce());
-        expect(ctx.compact).not.toHaveBeenCalled();
-        expect(pi.sendUserMessage).not.toHaveBeenCalled();
-        expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
-            '5511999998888@s.whatsapp.net',
-            'Session compaction requested. ✅',
-            true
+        await vi.waitFor(() => expect(mocks.childPrompt).toHaveBeenCalledOnce());
+        expect(mocks.childPrompt).toHaveBeenCalledWith(
+            expect.stringContaining(text), expect.objectContaining({ source: 'extension' })
         );
+        expect(ctx.compact).not.toHaveBeenCalled();
+        expect(ctx.abort).not.toHaveBeenCalled();
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
+        expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
     });
 
     it('send_wa_message tool reports disconnected status without sending', async () => {

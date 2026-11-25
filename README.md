@@ -82,8 +82,6 @@ Run `/whatsapp` to manage the connection and allowed chats:
 - **Recents** lists conversations, opens message history, allows a sender, or starts a manual reply. In message detail, press `R` to reply.
 - **Send Message** from a contact, group, or recent conversation sends a one-off message without invoking the agent.
 
-WhatsApp chat commands `/compact` and `/abort` compact or abort that chat's isolated Pi session, not the main TUI session.
-
 ## Isolated Chats And Reply Routing
 
 Each allowed contact or group gets a separate background Pi session and working directory. The first message starts a fresh session; subsequent messages resume it, including after a Pi restart. Members of the same group share the group's session. Existing main-session history is not copied. Removing a chat from the allow list does not delete its session or files.

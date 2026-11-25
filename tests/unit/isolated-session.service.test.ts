@@ -158,7 +158,7 @@ describe('isolated chat sessions', () => {
         }
     }, 30000);
 
-    it('aborts only the active chat, including work still preparing a prompt', async () => {
+    it('invalidates work still preparing a prompt during shutdown', async () => {
         const { create, ctx } = await fixture();
         const service = create();
         let release!: () => void;
@@ -173,14 +173,10 @@ describe('isolated chat sessions', () => {
                 stillLive = isLive();
             });
             await started;
-            expect(await service.abort(b)).toBe(false);
-            expect(await service.abort(a)).toBe(true);
+            const closing = service.shutdown();
             release();
-            await first;
+            await Promise.all([first, closing]);
             expect(stillLive).toBe(false);
-            let nextLive = false;
-            await service.enqueue(a, ctx, async (_runtime, isLive) => { nextLive = isLive(); });
-            expect(nextLive).toBe(true);
         } finally {
             release();
             await service.shutdown();

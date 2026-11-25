@@ -79,7 +79,6 @@ const mocks = vi.hoisted(() => {
         router: undefined as any,
         runQueuedJobs: false,
         childPrompt: vi.fn().mockResolvedValue(undefined),
-        isolatedAbort: vi.fn().mockResolvedValue(true),
         reset() {
             this.sessionManager = createSessionManager();
             this.whatsappService = createWhatsAppService();
@@ -91,7 +90,6 @@ const mocks = vi.hoisted(() => {
             this.router = undefined;
             this.runQueuedJobs = false;
             this.childPrompt = vi.fn().mockResolvedValue(undefined);
-            this.isolatedAbort = vi.fn().mockResolvedValue(true);
         }
     };
 });
@@ -126,8 +124,6 @@ vi.mock('../../src/services/isolated-session.service.ts', () => ({
                 return work({ workspace: 'test-workspace', session: { prompt: mocks.childPrompt, messages: [] } }, isCurrent);
             });
         }
-        abort = mocks.isolatedAbort;
-        hasSession = vi.fn().mockResolvedValue(false);
         shutdown = vi.fn().mockResolvedValue(undefined);
     }
 }));
@@ -428,30 +424,12 @@ describe('whatsapp-pi routing hooks with synthetic owned turns', () => {
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
     });
 
-    it('clears the processing reaction for commands that do not start an agent run', async () => {
+    it('clears the processing reaction for system messages that do not start an agent run', async () => {
         await setup();
-        mocks.extractIncomingText.mockReturnValueOnce({ kind: 'text', text: '/compact' });
+        mocks.extractIncomingText.mockReturnValueOnce({ kind: 'system', text: 'system message' });
         await mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming());
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(1, incoming().key, '⏳');
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(2, incoming().key, '');
-    });
-
-    it('routes abort to the chat session without aborting the main TUI', async () => {
-        const { pi, ctx } = await setup();
-        await beginOwned(pi, ctx);
-        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
-        const queued = incoming('queued');
-        await callback(queued);
-        mocks.extractIncomingText.mockReturnValueOnce({ kind: 'text', text: '/abort' });
-        const command = incoming('abort');
-        await callback(command);
-        expect(mocks.isolatedAbort).toHaveBeenCalledOnce();
-        expect(ctx.abort).not.toHaveBeenCalled();
-        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(queued.key, '');
-        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(command.key, '');
-        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
-        await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Aborted').message] }, ctx);
-        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
     });
 
     it('clears the processing reaction if media preparation fails', async () => {

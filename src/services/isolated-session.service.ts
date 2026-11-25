@@ -163,26 +163,6 @@ export class IsolatedSessionService {
         return next;
     }
 
-    async abort(chat: IsolatedChat): Promise<boolean> {
-        const key = this.key(chat);
-        const controller = this.active.get(key);
-        if (!controller) return false;
-        controller.abort();
-        await this.sessions.get(key)?.session.abort();
-        return true;
-    }
-
-    async hasSession(chat: IsolatedChat): Promise<boolean> {
-        if (this.sessions.has(this.key(chat))) return true;
-        try {
-            await stat(join(this.workspace(chat), '..', 'session', 'metadata.json'));
-            return true;
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-            throw error;
-        }
-    }
-
     async shutdown(): Promise<void> {
         this.closing = true;
         for (const controller of this.active.values()) controller.abort();

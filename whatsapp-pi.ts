@@ -399,44 +399,11 @@ export default function (pi: ExtensionAPI) {
             if (id && reaction) await clearProcessingReaction(id, reaction);
             return;
         }
-        const command = resolved.kind === 'text' ? resolved.text.trim().toLowerCase().split(/\s+/)[0] : '';
-        if (command === '/abort') {
-            try {
-                const aborted = await isolatedSessions.abort(chat);
-                if (isCurrent()) await whatsappService.sendMessage(remoteJid, aborted ? "Aborted! ✅" : "No active isolated session.", true);
-            } finally {
-                if (id && reaction) await clearProcessingReaction(id, reaction);
-            }
-            return;
-        }
-        if (command === '/compact') {
-            let exists: boolean;
-            try {
-                exists = await isolatedSessions.hasSession(chat);
-            } catch (error) {
-                if (id && reaction) await clearProcessingReaction(id, reaction);
-                throw error;
-            }
-            if (!exists) {
-                try {
-                    if (isCurrent()) await whatsappService.sendMessage(remoteJid, "No isolated session to compact.", true);
-                } finally {
-                    if (id && reaction) await clearProcessingReaction(id, reaction);
-                }
-                return;
-            }
-        }
-
         const task = isolatedSessions.enqueue(chat, ctx, async ({ session, workspace }, isLive) => {
             const childRouter = isolatedRouters.get(chatKey(chat));
             if (!childRouter) throw new Error('Isolated session router is unavailable');
             await activeRun.run({ router: childRouter, isCurrent: isLive }, async () => {
                 if (!isLive()) return;
-                if (command === '/compact') {
-                    await session.compact();
-                    if (isLive()) await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
-                    return;
-                }
                 const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName, workspace);
                 if (!isLive()) return;
                 const messageHeader = isGroup
