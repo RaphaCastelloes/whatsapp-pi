@@ -82,11 +82,15 @@ Run `/whatsapp` to manage the connection and allowed chats:
 - **Recents** lists conversations, opens message history, allows a sender, or starts a manual reply. In message detail, press `R` to reply.
 - **Send Message** from a contact, group, or recent conversation sends a one-off message without invoking the agent.
 
-WhatsApp chat commands `/compact` and `/abort` compact the current Pi context and abort the current Pi operation, respectively.
+WhatsApp chat commands `/compact` and `/abort` compact or abort that chat's isolated Pi session, not the main TUI session.
 
-## Trusted chats and reply routing
+## Isolated Chats And Reply Routing
 
-All allowed chats share the **same Pi model context**. Allow only mutually trusted people/groups; correct reply routing is not conversation privacy isolation.
+Each allowed contact or group gets a separate background Pi session and working directory. The first message starts a fresh session; subsequent messages resume it, including after a Pi restart. Members of the same group share the group's session. Existing main-session history is not copied. Removing a chat from the allow list does not delete its session or files.
+
+Sessions and workspaces are stored under `~/.pi/agent/extensions/whatsapp-pi/isolated/`, using account- and conversation-specific directory names. Incoming media for these sessions is organized under their workspace. If a saved session cannot be recovered, its request fails rather than falling back to the main TUI session.
+
+This is **conversation-context isolation, not a security or privacy sandbox**. Sessions may still access the same filesystem, credentials, network, and WhatsApp history. Background sessions load Pi's built-in tools and the WhatsApp tools, but do not automatically load other extensions or their input policies. Allow only trusted chats.
 
 Incoming prompts include an opaque request marker. It identifies an exact extension-submitted input in a bounded, memory-only registry; it is not a routing command. Pi's normal user-input policies still run. Ownership activates only when matching content is consumed, not when a chat message arrives.
 

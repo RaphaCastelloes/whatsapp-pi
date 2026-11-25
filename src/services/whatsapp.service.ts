@@ -882,6 +882,11 @@ export class WhatsAppService {
         return JSON.stringify([this.sessionManager.getAuthStateDir?.() ?? 'default', this.identityAccount || 'unpaired']);
     }
 
+    public hasAccountIdentity(): boolean {
+        this.updateIdentityAccount();
+        return Boolean(this.identityAccount);
+    }
+
     public getSessionContext(): WhatsAppSessionContext {
         this.updateIdentityAccount();
         return { accountScope: this.getAccountScope(), generation: this.sessionGeneration };

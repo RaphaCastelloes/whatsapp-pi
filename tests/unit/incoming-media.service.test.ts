@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 import { IncomingMediaService } from '../../src/services/incoming-media.service.ts';
 
 const mocks = vi.hoisted(() => ({
@@ -62,6 +63,29 @@ describe('IncomingMediaService', () => {
 
         expect(audioService.transcribe).toHaveBeenCalledWith(audioMessage);
         expect(console.log).not.toHaveBeenCalled();
+    });
+
+    it('organizes isolated chat media in that chat workspace', async () => {
+        const service = new IncomingMediaService(audioService as any);
+        mocks.downloadContentFromMessage.mockImplementation(async () => streamFrom([Buffer.from('media')]));
+        const workspace = join(process.cwd(), 'isolated-fixture');
+        const audioMessage = { seconds: 2 };
+        await service.process({ kind: 'audio', text: '', audioMessage }, 'Ana', workspace);
+        expect(audioService.transcribe).toHaveBeenCalledWith(audioMessage, workspace);
+
+        await service.process({ kind: 'image', text: '', imageMessage: { mimetype: 'image/jpeg' } }, 'Ana', workspace);
+        expect(mocks.writeFile).toHaveBeenCalledWith(join(workspace, 'media', 'image_1234567890.jpeg'), Buffer.from('media'));
+
+        const video = await service.process({ kind: 'video', text: '', videoMessage: { mimetype: 'video/mp4' } }, 'Ana', workspace);
+        expect(video.text).toContain(join(workspace, 'media', 'video_1234567890.mp4'));
+
+        const document = await service.process({
+            kind: 'document', text: '', documentMessage: { fileName: 'notes.txt', mimetype: 'text/plain' }
+        }, 'Ana', workspace);
+        expect(mocks.writeFile).toHaveBeenCalledWith(
+            join(workspace, '.pi-data', 'whatsapp', 'documents', '1234567890_notes.txt'), Buffer.from('media')
+        );
+        expect(document.text).toContain('./.pi-data/whatsapp/documents/1234567890_notes.txt');
     });
 
     it('downloads images and normalizes image/jpg MIME type', async () => {

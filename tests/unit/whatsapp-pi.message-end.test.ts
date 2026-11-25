@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
         getStatus: vi.fn().mockReturnValue('connected'),
         getAllowList: vi.fn().mockReturnValue([]),
         getAllowedGroups: vi.fn().mockReturnValue([]),
+        isConversationAllowed: vi.fn().mockReturnValue(true),
         setGroupJidForAuth: vi.fn()
     });
 
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => {
         canonicalConversation: vi.fn((jid: string) => jid),
         getQuotedMessage: vi.fn(),
         getAccountScope: vi.fn().mockReturnValue('fixture-account'),
+        hasAccountIdentity: vi.fn().mockReturnValue(true),
         getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
         isSessionContextCurrent: vi.fn().mockReturnValue(true),
         markIncomingProcessing: vi.fn(),
@@ -74,6 +76,10 @@ const mocks = vi.hoisted(() => {
         incomingMediaService: createIncomingMediaService(),
         outgoingMediaService: createOutgoingMediaService(),
         extractIncomingText: vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' }),
+        router: undefined as any,
+        runQueuedJobs: false,
+        childPrompt: vi.fn().mockResolvedValue(undefined),
+        isolatedAbort: vi.fn().mockResolvedValue(true),
         reset() {
             this.sessionManager = createSessionManager();
             this.whatsappService = createWhatsAppService();
@@ -82,6 +88,10 @@ const mocks = vi.hoisted(() => {
             this.incomingMediaService = createIncomingMediaService();
             this.outgoingMediaService = createOutgoingMediaService();
             this.extractIncomingText = vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' });
+            this.router = undefined;
+            this.runQueuedJobs = false;
+            this.childPrompt = vi.fn().mockResolvedValue(undefined);
+            this.isolatedAbort = vi.fn().mockResolvedValue(true);
         }
     };
 });
@@ -90,6 +100,36 @@ vi.mock('../../src/services/session.manager.ts', () => ({
     SessionManager: Object.assign(vi.fn(function () { return mocks.sessionManager; }), {
         isGroupJid: (jid: string) => jid.endsWith('@g.us')
     })
+}));
+
+vi.mock('../../src/services/conversation-router.service.ts', async importOriginal => {
+    const original = await importOriginal<typeof import('../../src/services/conversation-router.service.ts')>();
+    return {
+        ...original,
+        ConversationRouter: class extends original.ConversationRouter {
+            constructor(...args: ConstructorParameters<typeof original.ConversationRouter>) {
+                super(...args);
+                mocks.router ??= this;
+            }
+        }
+    };
+});
+
+vi.mock('../../src/services/isolated-session.service.ts', () => ({
+    IsolatedSessionService: class {
+        constructor(_tools: unknown, private hooks: (chat: unknown) => (pi: unknown) => void) {}
+        enqueue(chat: unknown, _ctx: unknown, work: (runtime: unknown, isLive: () => boolean) => Promise<void>, isCurrent: () => boolean) {
+            if (!mocks.runQueuedJobs) return new Promise<void>(() => {});
+            this.hooks(chat)({ on: vi.fn() });
+            return Promise.resolve().then(() => {
+                if (!isCurrent()) throw new Error('stale');
+                return work({ workspace: 'test-workspace', session: { prompt: mocks.childPrompt, messages: [] } }, isCurrent);
+            });
+        }
+        abort = mocks.isolatedAbort;
+        hasSession = vi.fn().mockResolvedValue(false);
+        shutdown = vi.fn().mockResolvedValue(undefined);
+    }
 }));
 
 vi.mock('../../src/services/whatsapp.service.ts', () => ({
@@ -194,8 +234,11 @@ const incoming = (id = 'incoming', jid = '5511999998888@s.whatsapp.net') => ({
 
 const submit = async (pi: MockPi, ctx: ReturnType<typeof createMockContext>, id = 'incoming', jid?: string) => {
     const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
-    await callback(incoming(id, jid));
-    const content = pi.sendUserMessage.mock.calls.at(-1)![0] as string;
+    const message = incoming(id, jid);
+    await callback(message);
+    // Exercise the routing hooks with a synthetic owned input; real isolated
+    // session dispatch is covered by whatsapp-pi.isolated.test.ts.
+    const content = mocks.router.prepare('synthetic input', message.key).content as string;
     await pi.handlers.get('input')!({ source: 'extension', text: content }, ctx);
     await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: content }] } }, ctx);
 };
@@ -221,7 +264,7 @@ const finalTurn = async (pi: MockPi, ctx: ReturnType<typeof createMockContext>, 
     await pi.handlers.get('turn_end')!({ ...event, toolResults: [] }, ctx);
 };
 
-describe('whatsapp-pi owned turn delivery', () => {
+describe('whatsapp-pi routing hooks with synthetic owned turns', () => {
     beforeEach(() => {
         resetI18n();
         vi.stubEnv('WHATSAPP_PI_LOCALE', '');
@@ -360,7 +403,7 @@ describe('whatsapp-pi owned turn delivery', () => {
         const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
         const queued = incoming('B', '15550000002@s.whatsapp.net');
         await callback(queued);
-        const content = pi.sendUserMessage.mock.calls.at(-1)![0] as string;
+        const content = mocks.router.prepare('synthetic queued input', queued.key).content as string;
 
         await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Done').message] }, ctx);
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
@@ -387,23 +430,24 @@ describe('whatsapp-pi owned turn delivery', () => {
 
     it('clears the processing reaction for commands that do not start an agent run', async () => {
         await setup();
-        mocks.incomingMediaService.process.mockResolvedValueOnce({ text: '/compact' });
+        mocks.extractIncomingText.mockReturnValueOnce({ kind: 'text', text: '/compact' });
         await mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming());
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(1, incoming().key, '⏳');
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenNthCalledWith(2, incoming().key, '');
     });
 
-    it('clears canceled queued reactions on abort but waits for the active run to end', async () => {
+    it('routes abort to the chat session without aborting the main TUI', async () => {
         const { pi, ctx } = await setup();
         await beginOwned(pi, ctx);
         const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
         const queued = incoming('queued');
         await callback(queued);
-        mocks.incomingMediaService.process.mockResolvedValueOnce({ text: '/abort' });
+        mocks.extractIncomingText.mockReturnValueOnce({ kind: 'text', text: '/abort' });
         const command = incoming('abort');
         await callback(command);
-        expect(ctx.abort).toHaveBeenCalledOnce();
-        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(queued.key, '');
+        expect(mocks.isolatedAbort).toHaveBeenCalledOnce();
+        expect(ctx.abort).not.toHaveBeenCalled();
+        expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(queued.key, '');
         expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(command.key, '');
         expect(mocks.whatsappService.setMessageReaction).not.toHaveBeenCalledWith(incoming().key, '');
         await pi.handlers.get('agent_end')!({ messages: [makeAssistantEvent('Aborted').message] }, ctx);
@@ -412,9 +456,11 @@ describe('whatsapp-pi owned turn delivery', () => {
 
     it('clears the processing reaction if media preparation fails', async () => {
         await setup();
+        mocks.runQueuedJobs = true;
         mocks.incomingMediaService.process.mockRejectedValueOnce(new Error('media error'));
-        await expect(mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming())).rejects.toThrow('media error');
-        expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, '');
+        await mocks.whatsappService.setMessageCallback.mock.calls[0][0](incoming());
+        await vi.waitFor(() => expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming().key, ''));
+        expect(mocks.childPrompt).not.toHaveBeenCalled();
     });
 
     it('does not clear an old account reaction using a new account', async () => {
@@ -460,26 +506,32 @@ describe('whatsapp-pi owned turn delivery', () => {
 
     it('does not inject slow media preparation after a session reset', async () => {
         const { pi, ctx } = await setup();
+        mocks.runQueuedJobs = true;
         let finish!: (value: { text: string }) => void;
         mocks.incomingMediaService.process.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
         const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
-        const processing = callback(incoming('slow'));
+        await callback(incoming('slow'));
+        await vi.waitFor(() => expect(mocks.incomingMediaService.process).toHaveBeenCalled());
         await pi.handlers.get('session_before_switch')!({}, ctx);
         finish({ text: 'Late media' });
-        await processing;
+        await vi.waitFor(() => expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming('slow').key, ''));
+        expect(mocks.childPrompt).not.toHaveBeenCalled();
         expect(pi.sendUserMessage).not.toHaveBeenCalled();
     });
 
     it.each(['Late media', '/abort', '/compact'])('does not inject or execute %s after its account changes during preparation', async text => {
         const { pi, ctx } = await setup();
+        mocks.runQueuedJobs = true;
         let finish!: (value: { text: string }) => void;
         mocks.incomingMediaService.process.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
         mocks.whatsappService.isSessionContextCurrent.mockImplementation(context => context?.accountScope === mocks.whatsappService.getAccountScope());
         const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
-        const processing = callback(incoming('old-account'));
+        await callback(incoming('old-account'));
+        await vi.waitFor(() => expect(mocks.incomingMediaService.process).toHaveBeenCalled());
         mocks.whatsappService.getAccountScope.mockReturnValue('new-account');
         finish({ text });
-        await processing;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(mocks.childPrompt).not.toHaveBeenCalled();
         expect(pi.sendUserMessage).not.toHaveBeenCalled();
         expect(ctx.abort).not.toHaveBeenCalled();
         expect(ctx.compact).not.toHaveBeenCalled();

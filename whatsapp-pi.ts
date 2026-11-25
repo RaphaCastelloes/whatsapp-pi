@@ -1,5 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { Type, type TSchema } from "typebox";
 import { SessionManager } from './src/services/session.manager.js';
 import { WhatsAppService } from './src/services/whatsapp.service.js';
 import { MenuHandler } from './src/ui/menu.handler.js';
@@ -14,6 +15,7 @@ import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './
 import type { WAMessageKey } from 'baileys';
 import type { MessageResult, QuoteTarget, TextSendOptions, WhatsAppSessionContext } from './src/models/whatsapp.types.js';
 import { OutgoingMediaService } from './src/services/outgoing-media.service.js';
+import { IsolatedSessionService, type IsolatedChat } from './src/services/isolated-session.service.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -70,6 +72,7 @@ export default function (pi: ExtensionAPI) {
         added: Promise<void>;
         consumed: boolean;
         epoch?: RoutingSnapshot['epoch'];
+        router?: ConversationRouter;
     };
     const processingReactions = new Map<string, ProcessingReaction>();
     const reactionId = (key: WAMessageKey, scope: string) =>
@@ -86,17 +89,43 @@ export default function (pi: ExtensionAPI) {
         const entries = [...processingReactions].filter(([, reaction]) => !consumedOnly || reaction.consumed);
         await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
     };
-    const clearUnconsumedReactions = async (except?: ProcessingReaction) => {
-        const entries = [...processingReactions].filter(([, reaction]) => !reaction.consumed && reaction !== except);
-        await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
-    };
-    const router = new ConversationRouter(
-        canonicalConversation,
-        routingScope,
-        key => {
+    const makeRouter = () => {
+        const instance = new ConversationRouter(canonicalConversation, routingScope, key => {
             whatsappService.markIncomingProcessing(key, 'consumed');
             const reaction = processingReactions.get(reactionId(key, routingScope()));
-            if (reaction) reaction.consumed = true;
+            if (reaction) {
+                reaction.consumed = true;
+                reaction.router = instance;
+            }
+        });
+        return instance;
+    };
+    const router = makeRouter();
+    const isolatedRouters = new Map<string, ConversationRouter>();
+    const activeRun = new AsyncLocalStorage<{ router: ConversationRouter; isCurrent: () => boolean; imageInput?: RoutedContent }>();
+    const currentRouter = () => activeRun.getStore()?.router ?? router;
+    const isolatedTools: ToolDefinition<any, any>[] = [];
+    const registerTool = <T extends TSchema>(tool: ToolDefinition<T>) => {
+        pi.registerTool(tool);
+        const guarded: ToolDefinition<T> = {
+            ...tool,
+            execute: async (...args) => {
+                const active = activeRun.getStore();
+                if (!active || !active.isCurrent()) {
+                    throw new Error(t('message.sender.sessionChanged'));
+                }
+                return tool.execute(...args);
+            }
+        };
+        isolatedTools.push(guarded as unknown as ToolDefinition<any, any>);
+    };
+    const chatKey = (chat: IsolatedChat) => JSON.stringify([chat.accountScope, chat.conversation]);
+    const isolatedSessions = new IsolatedSessionService(
+        () => isolatedTools,
+        chat => childPi => {
+            const childRouter = makeRouter();
+            isolatedRouters.set(chatKey(chat), childRouter);
+            installRoutingHooks(childPi, childRouter);
         }
     );
 
@@ -107,13 +136,13 @@ export default function (pi: ExtensionAPI) {
     });
 
     const trackOwnedSend = async (jid: string, snapshot: RoutingSnapshot | undefined, send: () => Promise<MessageResult>): Promise<MessageResult> => {
-        if (snapshot && snapshot.epoch.scope !== routingScope()) {
+        if ((activeRun.getStore() && !activeRun.getStore()!.isCurrent()) || (snapshot && snapshot.epoch.scope !== routingScope())) {
             return { success: false, error: t('message.sender.sessionChanged'), attempts: 0 };
         }
-        const token = router.beginSend(snapshot, jid);
+        const token = currentRouter().beginSend(snapshot, jid);
         try {
             const result = await send();
-            router.finishSend(token, result);
+            currentRouter().finishSend(token, result);
             const target = canonicalConversation(jid);
             if (result.success && snapshot && target && snapshot.epoch.scope === routingScope()) {
                 // Only a reply to this epoch's chat should clear its consumed requests.
@@ -125,7 +154,7 @@ export default function (pi: ExtensionAPI) {
             }
             return result;
         } catch (error) {
-            router.finishSend(token, { success: false, delivery: 'unknown' });
+            currentRouter().finishSend(token, { success: false, delivery: 'unknown' });
             throw error;
         }
     };
@@ -208,6 +237,8 @@ export default function (pi: ExtensionAPI) {
         shutdownState.__whatsappPiShutdown = {
             installed: shutdownState.__whatsappPiShutdown?.installed ?? false,
             stop: async () => {
+                router.reset();
+                await isolatedSessions.shutdown();
                 await whatsappService.stop();
             }
         };
@@ -299,10 +330,11 @@ export default function (pi: ExtensionAPI) {
 
     const resolveToolRecipientJid = (params: { jid?: string; recipient_jid?: string }): string | null => {
         const providedJid = params.jid || params.recipient_jid;
-        const lastRemoteJid = router.isActive() ? router.defaultTarget() : whatsappService.getLastRemoteJid();
+        const activeRouter = currentRouter();
+        const lastRemoteJid = activeRouter.isActive() ? activeRouter.defaultTarget() : whatsappService.getLastRemoteJid();
 
         if (!providedJid) {
-            if (router.isActive()) return lastRemoteJid || null;
+            if (activeRouter.isActive()) return lastRemoteJid || null;
             return lastRemoteJid || whatsappService.getOperatorJid() || null;
         }
 
@@ -323,12 +355,21 @@ export default function (pi: ExtensionAPI) {
         return providedJid;
     };
 
-    // Handle incoming messages by injecting them as user prompts
+    // Admitted chats run in separate Pi sessions, never in the main TUI context.
     whatsappService.setMessageCallback(async (msg) => {
         if (!msg.message || !whatsappService.isSessionContextCurrent(msg.sessionContext)) return;
-        const runtimeId = router.getRuntimeId();
-
         const remoteJid = msg.key.remoteJid;
+        const canonical = canonicalConversation(remoteJid);
+        const ctx = _ctx;
+        if (!canonical || !ctx || !whatsappService.hasAccountIdentity()) {
+            throw new Error('Cannot determine the WhatsApp account, isolated chat, or Pi context');
+        }
+        const chat: IsolatedChat = { accountScope: msg.sessionContext.accountScope, conversation: canonical };
+        const runtimeId = router.getRuntimeId();
+        const isCurrent = () => runtimeId === router.getRuntimeId()
+            && whatsappService.isSessionContextCurrent(msg.sessionContext)
+            && sessionManager.isConversationAllowed(msg.senderNumber)
+            && canonicalConversation(remoteJid) === canonical;
         const isGroup = remoteJid?.endsWith('@g.us') || false;
         const participant = isGroup ? (msg.key.participant?.split('@')[0] || 'unknown') : (remoteJid?.split('@')[0] || 'unknown');
         const sender = remoteJid?.split('@')[0] || "unknown";
@@ -336,7 +377,6 @@ export default function (pi: ExtensionAPI) {
 
         let reaction: ProcessingReaction | undefined;
         let id: string | undefined;
-        let handedOff = false;
         if (remoteJid && msg.key.id) {
             void whatsappService.markRead(msg.key);
             const key = { ...msg.key };
@@ -348,71 +388,88 @@ export default function (pi: ExtensionAPI) {
             processingReactions.set(id, reaction);
         }
 
+        let resolved: ReturnType<typeof extractIncomingText>;
         try {
-            const resolved = extractIncomingText(msg.message, recentsService);
-            if (resolved.kind === 'system') {
-                logger.log(`[WhatsApp-Pi] ${pushName} (${sender}): ${resolved.text}`);
-                return;
-            }
-
-            const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName);
-            if (runtimeId !== router.getRuntimeId() || !whatsappService.isSessionContextCurrent(msg.sessionContext)) {
-                if (whatsappService.isSessionContextCurrent(msg.sessionContext)) whatsappService.markIncomingProcessing(msg.key, 'failed');
-                return;
-            }
-
-            // Format message header with group context when applicable
-            const messageHeader = isGroup
-                ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
-                : `Message from ${pushName} (${sender}):`;
-
-            // Include quote information if present
-            let fullText = text;
-            if ('quotedMessage' in resolved && resolved.quotedMessage) {
-                const quotePrefix = t('incoming.quoted.replyingTo', { quotedText: resolved.quotedMessage.quotedText });
-                fullText = `${quotePrefix}\n\n${text}`;
-            }
-
-            logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
-
-            whatsappService.markIncomingProcessing?.(msg.key, 'prepared');
-
-            // Commands must not also become ordinary agent prompts.
-            if (text.trim().toLowerCase().startsWith('/compact')) {
-                logger.log(`[WhatsApp-Pi] Session compact requested by ${pushName}.`);
-
-                if (_ctx) {
-                    router.reset();
-                    _ctx.compact();
-                    await clearUnconsumedReactions(reaction);
-                    await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
-                }
-                return;
-            }
-
-            if (text.trim().toLowerCase().startsWith('/abort')) {
-                logger.log(`[WhatsApp-Pi] Abort requested by ${pushName}.`);
-                if (_ctx) {
-                    router.reset();
-                    _ctx.abort();
-                    await clearUnconsumedReactions(reaction);
-                    await whatsappService.sendMessage(remoteJid, "Aborted! ✅", true);
-                }
-                return;
-            }
-
-            const content: RoutedContent = imageBuffer && imageMimeType ? [
-                { type: 'text', text: `${messageHeader} ${fullText}` },
-                { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
-            ] : `${messageHeader} ${fullText}`;
-            const submitted = router.prepare(content, msg.key);
-            // Preserve Pi input policies; ownership requires observed, exact consumed content.
-            pi.sendUserMessage(submitted.content as Parameters<ExtensionAPI['sendUserMessage']>[0], { deliverAs: 'followUp' });
-            handedOff = true;
-            whatsappService.markIncomingProcessing?.(msg.key, 'handed-off');
-        } finally {
-            if (!handedOff && id && reaction) await clearProcessingReaction(id, reaction);
+            resolved = extractIncomingText(msg.message, recentsService);
+        } catch (error) {
+            if (id && reaction) await clearProcessingReaction(id, reaction);
+            throw error;
         }
+        if (resolved.kind === 'system') {
+            if (id && reaction) await clearProcessingReaction(id, reaction);
+            return;
+        }
+        const command = resolved.kind === 'text' ? resolved.text.trim().toLowerCase().split(/\s+/)[0] : '';
+        if (command === '/abort') {
+            try {
+                const aborted = await isolatedSessions.abort(chat);
+                if (isCurrent()) await whatsappService.sendMessage(remoteJid, aborted ? "Aborted! ✅" : "No active isolated session.", true);
+            } finally {
+                if (id && reaction) await clearProcessingReaction(id, reaction);
+            }
+            return;
+        }
+        if (command === '/compact') {
+            let exists: boolean;
+            try {
+                exists = await isolatedSessions.hasSession(chat);
+            } catch (error) {
+                if (id && reaction) await clearProcessingReaction(id, reaction);
+                throw error;
+            }
+            if (!exists) {
+                try {
+                    if (isCurrent()) await whatsappService.sendMessage(remoteJid, "No isolated session to compact.", true);
+                } finally {
+                    if (id && reaction) await clearProcessingReaction(id, reaction);
+                }
+                return;
+            }
+        }
+
+        const task = isolatedSessions.enqueue(chat, ctx, async ({ session, workspace }, isLive) => {
+            const childRouter = isolatedRouters.get(chatKey(chat));
+            if (!childRouter) throw new Error('Isolated session router is unavailable');
+            await activeRun.run({ router: childRouter, isCurrent: isLive }, async () => {
+                if (!isLive()) return;
+                if (command === '/compact') {
+                    await session.compact();
+                    if (isLive()) await whatsappService.sendMessage(remoteJid, "Session compaction requested. ✅", true);
+                    return;
+                }
+                const { text, imageBuffer, imageMimeType } = await incomingMediaService.process(resolved, pushName, workspace);
+                if (!isLive()) return;
+                const messageHeader = isGroup
+                    ? `Message from ${pushName} (${participant}) in group ${remoteJid}:`
+                    : `Message from ${pushName} (${sender}):`;
+                const fullText = 'quotedMessage' in resolved && resolved.quotedMessage
+                    ? `${t('incoming.quoted.replyingTo', { quotedText: resolved.quotedMessage.quotedText })}\n\n${text}` : text;
+                logger.log(`[WhatsApp-Pi] ${messageHeader} ${fullText}`);
+                whatsappService.markIncomingProcessing(msg.key, 'prepared');
+                const content: RoutedContent = imageBuffer && imageMimeType ? [
+                    { type: 'text', text: `${messageHeader} ${fullText}` },
+                    { type: 'image', data: imageBuffer.toString('base64'), mimeType: imageMimeType }
+                ] : `${messageHeader} ${fullText}`;
+                const submitted = childRouter.prepare(content, msg.key);
+                const blocks = typeof submitted.content === 'string' ? undefined : submitted.content;
+                if (blocks?.some(block => block.type === 'image')) activeRun.getStore()!.imageInput = submitted.content;
+                const prompt = typeof submitted.content === 'string' ? submitted.content : blocks!.filter(block => block.type === 'text').map(block => block.text ?? '').join('\n');
+                const images = blocks?.filter(block => block.type === 'image').map(block => ({
+                    type: 'image' as const, data: block.data!, mimeType: block.mimeType!
+                }));
+                whatsappService.markIncomingProcessing(msg.key, 'handed-off');
+                await session.prompt(prompt, { source: 'extension', expandPromptTemplates: false, images });
+                const last = [...session.messages].reverse().find(message => message.role === 'assistant');
+                if (last?.role === 'assistant' && last.stopReason === 'error') throw new Error(last.errorMessage || 'Isolated agent failed');
+            });
+        }, isCurrent);
+        void task.catch(error => {
+            if (isCurrent()) whatsappService.markIncomingProcessing(msg.key, 'failed');
+            logger.error('[WhatsApp-Pi] Isolated session failed:', error);
+            ctx.ui.notify('WhatsApp: isolated session failed; the message was not sent to the main session.', 'error');
+        }).finally(async () => {
+            if (id && reaction && !reaction.consumed) await clearProcessingReaction(id, reaction);
+        }).catch(error => logger.error('[WhatsApp-Pi] Failed to clear isolated request:', error));
     });
 
     const quoteSchema = Type.Object({
@@ -425,7 +482,7 @@ export default function (pi: ExtensionAPI) {
         ? { ...input, messageId: input.messageId ?? '' } : undefined;
 
     // Register send_wa_message tool (LLM-callable)
-    pi.registerTool({
+    registerTool({
         name: "send_wa_message",
         label: "Send WhatsApp Message",
         description: "Send text to a known WhatsApp contact/group JID. If jid is omitted, uses the unique conversation owning the current turn. Ambiguous or terminal-only turns require an explicit JID; idle manual calls retain last-conversation/operator fallback.",
@@ -458,7 +515,7 @@ export default function (pi: ExtensionAPI) {
 
             const message = params.message ?? '';
 
-            const snapshot = router.snapshot();
+            const snapshot = currentRouter().snapshot();
             const quote = quoteTarget(params.quote);
             const quotedJid = quote ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
             if (quote && !quotedJid) return { isError: true, details: undefined, content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: t('quote.unavailable'), attempts: 0 }) }] };
@@ -483,7 +540,7 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.registerTool({
+    registerTool({
         name: 'send_wa_media',
         label: t('media.toolLabel'),
         description: t('media.toolDescription'),
@@ -500,7 +557,7 @@ export default function (pi: ExtensionAPI) {
             const mediaPath = params.path;
             const mediaType = params.type;
             const quote = quoteTarget(params.quote);
-            const snapshot = router.snapshot();
+            const snapshot = currentRouter().snapshot();
             const resolvedJid = resolveToolRecipientJid(params);
             const failed = (error: string) => ({ success: false, error, attempts: 0 });
             const quotedJid = quote && resolvedJid ? whatsappService.getQuotedMessage(resolvedJid, quote)?.key.remoteJid : undefined;
@@ -551,7 +608,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Register send_reaction tool (LLM-callable)
-    pi.registerTool({
+    registerTool({
         name: "send_reaction",
         label: t("tool.sendReaction.label"),
         description: t("tool.sendReaction.description"),
@@ -594,7 +651,7 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.registerTool({
+    registerTool({
         name: "request_wa_history",
         label: t('history.label'),
         description: t('history.description'),
@@ -618,7 +675,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Register list_wa_conversations tool (LLM-callable, read-only)
-    pi.registerTool({
+    registerTool({
         name: "list_wa_conversations",
         label: t("tool.listConversations.label"),
         description: t("tool.listConversations.description"),
@@ -658,7 +715,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Register get_wa_conversation_history tool (LLM-callable, read-only)
-    pi.registerTool({
+    registerTool({
         name: "get_wa_conversation_history",
         label: t("tool.getHistory.label"),
         description: t("tool.getHistory.description"),
@@ -700,7 +757,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Register check_wa_new_messages tool (LLM-callable, read-only)
-    pi.registerTool({
+    registerTool({
         name: "check_wa_new_messages",
         label: t("tool.checkNew.label"),
         description: t("tool.checkNew.description"),
@@ -748,49 +805,71 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.on('agent_start', () => { router.startRun(); });
-    pi.on('message_start', async (event) => {
-        if (event.message.role === 'user' || event.message.role === 'custom') router.consume(event.message);
-        if (event.message.role === 'assistant') {
-            router.freeze();
-            const epoch = router.snapshot()?.epoch;
-            for (const reaction of processingReactions.values()) {
-                if (reaction.consumed && !reaction.epoch) reaction.epoch = epoch;
+    function installRoutingHooks(api: ExtensionAPI, runRouter: ConversationRouter) {
+        if (api !== pi) api.on('input', event => { runRouter.observeInput(event); });
+        api.on('agent_start', () => { runRouter.startRun(); });
+        api.on('message_start', async (event) => {
+            if (event.message.role === 'user' || event.message.role === 'custom') {
+                const active = activeRun.getStore();
+                const original = active?.router === runRouter ? active.imageInput : undefined;
+                const expectedText = Array.isArray(original) ? original.filter(block => block.type === 'text').map(block => block.text ?? '').join('\n') : undefined;
+                const actualText = Array.isArray(event.message.content)
+                    ? event.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n') : event.message.content;
+                // The child loads no other extensions. Pi may resize an image after its
+                // input event; correlate that normalized user message to the observed input.
+                if (event.message.role === 'user' && original && expectedText &&
+                    (actualText === expectedText || actualText.startsWith(`${expectedText}\n\n`))) {
+                    runRouter.consume({ role: 'user', content: original });
+                    active!.imageInput = undefined;
+                } else {
+                    runRouter.consume(event.message);
+                }
             }
-            const target = router.defaultTarget();
-            if (target && sessionManager.getStatus() === 'connected') await whatsappService.sendPresence(target, 'composing');
-        }
-    });
-    pi.on('message_end', async event => {
-        router.buffer(event.message);
-    });
-    pi.on('turn_end', async (_event, ctx) => {
-        if (sessionManager.getStatus() !== 'connected') return;
-        const mirror = router.mirror();
-        if (!mirror?.snapshot.target) return;
-        const target = mirror.snapshot.target;
-        try {
-            const result = await sendWithOwnership(target, mirror.text, mirror.snapshot);
-            if (result.success) {
-                await recentsService.recordMessage({
-                    messageId: result.messageId ?? `${Date.now()}`,
-                    senderNumber: toRecentSenderNumber(target), text: mirror.text,
-                    direction: 'outgoing', timestamp: Date.now()
-                });
-                ctx.ui.notify(t('notify.replySent'), 'info');
-            } else ctx.ui.notify(t('notify.replyFailed'), 'error');
-        } catch {
-            ctx.ui.notify(t('notify.replyFailed'), 'error');
-        }
-    });
-    pi.on('agent_end', async event => {
-        const last = [...event.messages].reverse().find(message => message.role === 'assistant');
-        router.endRun(last?.role === 'assistant' && last.stopReason === 'error');
-        await clearProcessingReactions(true);
-    });
+            if (event.message.role === 'assistant') {
+                runRouter.freeze();
+                const epoch = runRouter.snapshot()?.epoch;
+                for (const reaction of processingReactions.values()) {
+                    if (reaction.router === runRouter && reaction.consumed && !reaction.epoch) reaction.epoch = epoch;
+                }
+                const target = runRouter.defaultTarget();
+                if (target && sessionManager.getStatus() === 'connected') await whatsappService.sendPresence(target, 'composing');
+            }
+        });
+        api.on('message_end', async event => {
+            runRouter.buffer(event.message);
+        });
+        api.on('turn_end', async (_event, ctx) => {
+            if (sessionManager.getStatus() !== 'connected') return;
+            const mirror = runRouter.mirror();
+            if (!mirror?.snapshot.target) return;
+            const target = mirror.snapshot.target;
+            try {
+                const result = await sendWithOwnership(target, mirror.text, mirror.snapshot);
+                if (result.success) {
+                    await recentsService.recordMessage({
+                        messageId: result.messageId ?? `${Date.now()}`,
+                        senderNumber: toRecentSenderNumber(target), text: mirror.text,
+                        direction: 'outgoing', timestamp: Date.now()
+                    });
+                    (_ctx ?? ctx).ui.notify(t('notify.replySent'), 'info');
+                } else (_ctx ?? ctx).ui.notify(t('notify.replyFailed'), 'error');
+            } catch {
+                (_ctx ?? ctx).ui.notify(t('notify.replyFailed'), 'error');
+            }
+        });
+        api.on('agent_end', async event => {
+            const last = [...event.messages].reverse().find(message => message.role === 'assistant');
+            runRouter.endRun(last?.role === 'assistant' && last.stopReason === 'error');
+            const entries = [...processingReactions].filter(([, reaction]) => reaction.consumed && reaction.router === runRouter);
+            await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
+        });
+    }
+    installRoutingHooks(pi, router);
 
     pi.on("session_shutdown", async () => {
         router.reset();
+        await isolatedSessions.shutdown();
+        isolatedRouters.clear();
         await clearProcessingReactions();
         logger.log("[WhatsApp-Pi] Session shutdown detected. Stopping WhatsApp service...");
         await whatsappService.stop();

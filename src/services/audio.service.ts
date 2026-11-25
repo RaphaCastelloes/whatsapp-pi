@@ -32,13 +32,15 @@ export class AudioService {
         }
     }
 
-    async transcribe(audioMessage: any): Promise<string> {
+    async transcribe(audioMessage: any, workspace?: string): Promise<string> {
         const totalStart = Date.now();
 
         try {
             const filename = `audio_${Date.now()}`;
-            const inputPath = join(this.mediaDir, `${filename}.ogg`);
-            const wavPath = join(this.mediaDir, `${filename}.wav`);
+            const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
+            const inputPath = join(mediaDir, `${filename}.ogg`);
+            const wavPath = join(mediaDir, `${filename}.wav`);
+            await mkdir(mediaDir, { recursive: true });
 
             const buffer = await this.measurePhase('download', async () => {
                 const stream = await downloadContentFromMessage(audioMessage, 'audio');

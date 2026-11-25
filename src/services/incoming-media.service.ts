@@ -25,33 +25,35 @@ export class IncomingMediaService {
         private readonly logger = new WhatsAppPiLogger(false)
     ) {}
 
-    async process(resolved: IncomingResolution, pushName: string): Promise<ProcessedIncomingContent> {
+    async process(resolved: IncomingResolution, pushName: string, workspace?: string): Promise<ProcessedIncomingContent> {
         if (resolved.kind === 'audio') {
-            return this.processAudio(resolved.audioMessage, pushName);
+            return this.processAudio(resolved.audioMessage, pushName, workspace);
         }
 
         if (resolved.kind === 'image') {
-            return this.processImage(resolved.imageMessage, resolved.text, pushName);
+            return this.processImage(resolved.imageMessage, resolved.text, pushName, workspace);
         }
 
         if (resolved.kind === 'video') {
-            return this.processVideo(resolved.videoMessage, resolved.text, pushName);
+            return this.processVideo(resolved.videoMessage, resolved.text, pushName, workspace);
         }
 
         if (resolved.kind === 'document') {
-            return this.processDocument(resolved.documentMessage, pushName);
+            return this.processDocument(resolved.documentMessage, pushName, workspace);
         }
 
         return { text: resolved.text };
     }
 
-    private async processAudio(audioMessage: any, pushName: string): Promise<ProcessedIncomingContent> {
+    private async processAudio(audioMessage: any, pushName: string, workspace?: string): Promise<ProcessedIncomingContent> {
         this.logger.log(t('incoming.media.audioTranscribing', { pushName }));
-        const transcription = await this.audioService.transcribe(audioMessage);
+        const transcription = workspace
+            ? await this.audioService.transcribe(audioMessage, workspace)
+            : await this.audioService.transcribe(audioMessage);
         return { text: t('incoming.media.audioTranscribed', { transcription }) };
     }
 
-    private async processImage(imageMessage: any, fallbackText: string, pushName: string): Promise<ProcessedIncomingContent> {
+    private async processImage(imageMessage: any, fallbackText: string, pushName: string, workspace?: string): Promise<ProcessedIncomingContent> {
         this.logger.log(t('incoming.media.imageDownloading', { pushName }));
 
         try {
@@ -61,7 +63,7 @@ export class IncomingMediaService {
             if (imageMimeType === 'image/jpg') imageMimeType = 'image/jpeg';
 
             this.logger.log(t('incoming.media.imageDownloaded', { imageMimeType, rawMime, size: imageBuffer.length }));
-            await this.saveMediaFile('image', imageMimeType, imageBuffer);
+            await this.saveMediaFile('image', imageMimeType, imageBuffer, workspace);
 
             return {
                 text: fallbackText || t('incoming.media.image'),
@@ -74,7 +76,7 @@ export class IncomingMediaService {
         }
     }
 
-    private async processVideo(videoMessage: any, fallbackText: string, pushName: string): Promise<ProcessedIncomingContent> {
+    private async processVideo(videoMessage: any, fallbackText: string, pushName: string, workspace?: string): Promise<ProcessedIncomingContent> {
         this.logger.log(`[WhatsApp-Pi] Downloading video from ${pushName}...`);
 
         try {
@@ -82,9 +84,10 @@ export class IncomingMediaService {
             const mimeType = (videoMessage.mimetype || 'video/mp4').toLowerCase().split(';')[0].trim();
             const extension = mimeType.split('/')[1] || 'mp4';
             const fileName = `video_${Date.now()}.${extension}`;
-            const absolutePath = join(this.mediaDir, fileName);
+            const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
+            const absolutePath = join(mediaDir, fileName);
 
-            await mkdir(this.mediaDir, { recursive: true });
+            await mkdir(mediaDir, { recursive: true });
             await writeFile(absolutePath, buffer);
             this.logger.log(`[WhatsApp-Pi] Video saved to ${absolutePath} (${buffer.length} bytes)`);
 
@@ -95,17 +98,18 @@ export class IncomingMediaService {
         }
     }
 
-    private async saveMediaFile(kind: 'image' | 'video', mimeType: string, buffer: Buffer): Promise<string> {
+    private async saveMediaFile(kind: 'image' | 'video', mimeType: string, buffer: Buffer, workspace?: string): Promise<string> {
         const extension = mimeType.split('/')[1] || (kind === 'image' ? 'jpg' : 'mp4');
         const fileName = `${kind}_${Date.now()}.${extension}`;
-        const absolutePath = join(this.mediaDir, fileName);
+        const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
+        const absolutePath = join(mediaDir, fileName);
 
-        await mkdir(this.mediaDir, { recursive: true });
+        await mkdir(mediaDir, { recursive: true });
         await writeFile(absolutePath, buffer);
         return absolutePath;
     }
 
-    private async processDocument(documentMessage: any, pushName: string): Promise<ProcessedIncomingContent> {
+    private async processDocument(documentMessage: any, pushName: string, workspace?: string): Promise<ProcessedIncomingContent> {
         const fileName = documentMessage.fileName || 'unnamed_document';
         const mimeType = documentMessage.mimetype || 'application/octet-stream';
         const fileSize = documentMessage.fileLength ? Number(documentMessage.fileLength) : 0;
@@ -114,7 +118,7 @@ export class IncomingMediaService {
 
         try {
             const buffer = await this.downloadMessage(documentMessage, 'document');
-            const relativePath = await this.saveDocument(fileName, buffer);
+            const relativePath = await this.saveDocument(fileName, buffer, workspace);
 
             this.logger.log(t('incoming.media.documentSaved', { relativePath, size: buffer.length }));
 
@@ -182,10 +186,10 @@ export class IncomingMediaService {
         return buffer;
     }
 
-    private async saveDocument(fileName: string, buffer: Buffer): Promise<string> {
+    private async saveDocument(fileName: string, buffer: Buffer, workspace?: string): Promise<string> {
         const sanitized = fileName.replace(/[^a-z0-9._-]/gi, '_');
         const savedFileName = `${Date.now()}_${sanitized}`;
-        const documentDir = join(process.cwd(), '.pi-data', 'whatsapp', 'documents');
+        const documentDir = join(workspace ?? process.cwd(), '.pi-data', 'whatsapp', 'documents');
         const absolutePath = join(documentDir, savedFileName);
 
         await mkdir(documentDir, { recursive: true });

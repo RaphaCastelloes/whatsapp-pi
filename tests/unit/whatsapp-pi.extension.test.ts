@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
         getStatus: vi.fn().mockReturnValue('connected'),
         getAllowList: vi.fn().mockReturnValue([{ number: '+5511999998888', name: 'Ana' }]),
         getAllowedGroups: vi.fn().mockReturnValue([]),
+        isConversationAllowed: vi.fn().mockReturnValue(true),
         setGroupJidForAuth: vi.fn()
     });
 
@@ -41,6 +42,7 @@ const mocks = vi.hoisted(() => {
         canonicalConversation: vi.fn((jid: string) => jid),
         getQuotedMessage: vi.fn(),
         getAccountScope: vi.fn().mockReturnValue('fixture-account'),
+        hasAccountIdentity: vi.fn().mockReturnValue(true),
         getSessionContext: vi.fn().mockReturnValue({ accountScope: 'fixture-account', generation: 1 }),
         isSessionContextCurrent: vi.fn().mockReturnValue(true),
         markIncomingProcessing: vi.fn(),
@@ -70,6 +72,8 @@ const mocks = vi.hoisted(() => {
         menuHandler: createMenuHandler(),
         incomingMediaService: createIncomingMediaService(),
         extractIncomingText: vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' }),
+        childPrompt: vi.fn().mockResolvedValue(undefined),
+        childCompact: vi.fn().mockResolvedValue(undefined),
         reset() {
             this.sessionManager = createSessionManager();
             this.whatsappService = createWhatsAppService();
@@ -77,6 +81,8 @@ const mocks = vi.hoisted(() => {
             this.menuHandler = createMenuHandler();
             this.incomingMediaService = createIncomingMediaService();
             this.extractIncomingText = vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' });
+            this.childPrompt = vi.fn().mockResolvedValue(undefined);
+            this.childCompact = vi.fn().mockResolvedValue(undefined);
         }
     };
 });
@@ -85,6 +91,24 @@ vi.mock('../../src/services/session.manager.ts', () => ({
     SessionManager: Object.assign(vi.fn(function () { return mocks.sessionManager; }), {
         isGroupJid: (jid: string) => jid.endsWith('@g.us')
     })
+}));
+
+vi.mock('../../src/services/isolated-session.service.ts', () => ({
+    IsolatedSessionService: class {
+        constructor(_tools: unknown, private hooks: (chat: unknown) => (pi: unknown) => void) {}
+        enqueue(chat: unknown, _ctx: unknown, work: (runtime: unknown, isLive: () => boolean) => Promise<void>, isCurrent: () => boolean) {
+            this.hooks(chat)({ on: vi.fn() });
+            return Promise.resolve().then(() => {
+                if (!isCurrent()) throw new Error('stale');
+                return work({
+                    workspace: 'isolated-workspace',
+                    session: { prompt: mocks.childPrompt, compact: mocks.childCompact, messages: [] }
+                }, isCurrent);
+            });
+        }
+        hasSession = vi.fn().mockResolvedValue(true);
+        shutdown = vi.fn().mockResolvedValue(undefined);
+    }
 }));
 
 vi.mock('../../src/services/whatsapp.service.ts', () => ({
@@ -387,11 +411,13 @@ describe('whatsapp-pi extension', () => {
         );
     });
 
-    it('wires incoming WhatsApp messages into Pi follow-up user messages', async () => {
+    it('routes incoming WhatsApp messages into an isolated session', async () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
+        const ctx = createMockContext();
 
         registerExtension(pi as any);
+        await pi.handlers.get('session_start')!({}, ctx);
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
@@ -401,35 +427,51 @@ describe('whatsapp-pi extension', () => {
                 fromMe: false
             },
             pushName: 'Ana',
+            senderNumber: '+5511999998888',
+            sessionContext: { accountScope: 'fixture-account', generation: 1 },
             message: { conversation: 'hello' }
         });
 
         expect(mocks.extractIncomingText).toHaveBeenCalledWith({ conversation: 'hello' }, mocks.recentsService);
+        await vi.waitFor(() => expect(mocks.childPrompt).toHaveBeenCalledOnce());
         expect(mocks.incomingMediaService.process).toHaveBeenCalledWith(
             { kind: 'text', text: 'hello from whatsapp' },
-            'Ana'
+            'Ana', 'isolated-workspace'
         );
         expect(mocks.whatsappService.markRead).toHaveBeenCalledWith({ remoteJid: '5511999998888@s.whatsapp.net', id: 'WA1', fromMe: false });
         expect(mocks.whatsappService.sendPresence).not.toHaveBeenCalled();
-        expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        expect(mocks.childPrompt).toHaveBeenCalledWith(
             expect.stringContaining('Message from Ana (5511999998888): hello from whatsapp'),
-            { deliverAs: 'followUp' }
+            expect.objectContaining({ source: 'extension', expandPromptTemplates: false })
         );
-        const submitted = pi.sendUserMessage.mock.calls[0][0] as string;
+        const submitted = mocks.childPrompt.mock.calls[0][0] as string;
         expect(submitted).toMatch(/^\[WhatsApp request [\da-f-]+\]/);
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the connected WhatsApp account is unknown', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
         const ctx = createMockContext();
-        await pi.handlers.get('input')!({ source: 'extension', text: submitted }, ctx);
-        await pi.handlers.get('agent_start')!({}, ctx);
-        await pi.handlers.get('message_start')!({ message: { role: 'user', content: [{ type: 'text', text: submitted }] } }, ctx);
-        await pi.handlers.get('message_start')!({ message: { role: 'assistant', content: [] } }, ctx);
-        expect(mocks.whatsappService.sendPresence).toHaveBeenCalledWith('5511999998888@s.whatsapp.net', 'composing');
+        registerExtension(pi as any);
+        await pi.handlers.get('session_start')!({}, ctx);
+        mocks.whatsappService.hasAccountIdentity.mockReturnValue(false);
+        const callback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
+        await expect(callback({
+            key: { id: 'unknown', remoteJid: '15550000001@s.whatsapp.net', fromMe: false },
+            senderNumber: '+15550000001',
+            sessionContext: { accountScope: 'unknown', generation: 1 },
+            message: { conversation: 'hello' }
+        })).rejects.toThrow('Cannot determine the WhatsApp account');
+        expect(mocks.childPrompt).not.toHaveBeenCalled();
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
     });
 
     it('executes /compact commands received from WhatsApp', async () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
         const ctx = createMockContext();
-        mocks.incomingMediaService.process.mockResolvedValue({ text: '/compact' });
+        mocks.extractIncomingText.mockReturnValue({ kind: 'text', text: '/compact' });
 
         registerExtension(pi as any);
         await pi.handlers.get('session_start')!({ reason: 'manual' }, ctx);
@@ -442,10 +484,13 @@ describe('whatsapp-pi extension', () => {
                 fromMe: false
             },
             pushName: 'Ana',
+            senderNumber: '+5511999998888',
+            sessionContext: { accountScope: 'fixture-account', generation: 1 },
             message: { conversation: '/compact' }
         });
 
-        expect(ctx.compact).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(mocks.childCompact).toHaveBeenCalledOnce());
+        expect(ctx.compact).not.toHaveBeenCalled();
         expect(pi.sendUserMessage).not.toHaveBeenCalled();
         expect(mocks.whatsappService.sendMessage).toHaveBeenCalledWith(
             '5511999998888@s.whatsapp.net',
@@ -522,8 +567,10 @@ describe('whatsapp-pi extension', () => {
     it('formats group messages with participant info in the prompt', async () => {
         const registerExtension = await loadExtension();
         const pi = createMockPi();
+        const ctx = createMockContext();
 
         registerExtension(pi as any);
+        await pi.handlers.get('session_start')!({}, ctx);
         const messageCallback = mocks.whatsappService.setMessageCallback.mock.calls[0][0];
 
         await messageCallback({
@@ -534,12 +581,16 @@ describe('whatsapp-pi extension', () => {
                 fromMe: false
             },
             pushName: 'Ana',
+            senderNumber: '120363012345@g.us',
+            sessionContext: { accountScope: 'fixture-account', generation: 1 },
             message: { conversation: 'hello group' }
         });
 
-        expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        await vi.waitFor(() => expect(mocks.childPrompt).toHaveBeenCalledOnce());
+        expect(mocks.childPrompt).toHaveBeenCalledWith(
             expect.stringContaining('Message from Ana (5511999998888) in group 120363012345@g.us: hello from whatsapp'),
-            { deliverAs: 'followUp' }
+            expect.objectContaining({ source: 'extension' })
         );
+        expect(pi.sendUserMessage).not.toHaveBeenCalled();
     });
 });
