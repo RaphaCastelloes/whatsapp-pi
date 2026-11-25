@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile, mkdir, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageStore } from '../../src/services/message-store.service.ts';
@@ -35,11 +35,20 @@ describe('authoritative archive and offline partitions', () => {
         await restarted.close();
     });
     it.skipIf(process.platform === 'win32')('restricts archive files and directory to the owner', async () => {
-        const options = await fixture(); const store = await open(options);
+        const options = await fixture();
+        await writeFile(options.legacyPath, JSON.stringify({ conversations: [], messagesBySender: {} }));
+        const store = await open(options);
         try {
             await store.activate('self', 'scope');
+            store.put({ key, message: { conversation: 'private' } }); await store.flush();
+            const path = store.getArchiveState().path;
+            expect(path).toBeDefined();
+            const markers = (await readdir(options.root)).filter(file => /^profile-[a-f0-9]{32}\.json$/.test(file));
+            expect(markers).toHaveLength(1);
             expect((await stat(options.root)).mode & 0o777).toBe(0o700);
-            expect((await stat(store.getArchiveState().path!)).mode & 0o777).toBe(0o600);
+            for (const file of [path!, path! + '.lock', join(options.root, markers[0]), join(options.root, 'legacy-unassigned.json'), options.legacyPath + '.pre-archive-backup']) {
+                expect((await stat(file)).mode & 0o777).toBe(0o600);
+            }
         } finally {
             await store.close();
         }

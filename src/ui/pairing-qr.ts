@@ -2,6 +2,7 @@ import * as qrcode from 'qrcode-terminal';
 
 // Windows Terminal maps sixel pixels to a 10-by-20 virtual text cell.
 const MODULE_SIZE = 4;
+// QR codes require a four-module quiet zone on every side.
 const QUIET_ZONE = 4;
 
 function toSixel(text: string): string | undefined {

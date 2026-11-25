@@ -19,7 +19,7 @@ describe('pairing QR', () => {
         else Reflect.deleteProperty(process.stdout, 'isTTY');
     });
 
-    it('renders all QR modules with a four-module white margin', () => {
+    it('renders all QR modules with a four-module quiet zone', () => {
         vi.stubEnv('WT_SESSION', 'test');
         vi.stubEnv('TERM_PROGRAM', '');
         vi.stubEnv('TMUX', '');
