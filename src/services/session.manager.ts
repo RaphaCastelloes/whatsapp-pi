@@ -45,6 +45,11 @@ export class SessionManager {
     private visionModel: string = 'gpt-4o';
     private operatorJid: string = '';
     private configLoaded = false;
+    private onConversationRemoved?: () => void;
+
+    setConversationRemovedCallback(callback: () => void): void {
+        this.onConversationRemoved = callback;
+    }
 
     constructor(baseDir = getDefaultStorageRoot(), legacyBaseDir = baseDir === getDefaultStorageRoot() ? getDefaultLegacyStorageRoot() : baseDir) {
         this.storagePaths = createStoragePaths(baseDir, legacyBaseDir);
@@ -290,6 +295,7 @@ export class SessionManager {
 
     async removeNumber(number: string) {
         this.allowList = this.allowList.filter(c => c.number !== number);
+        this.onConversationRemoved?.();
         await this.saveConfig();
     }
 
@@ -315,6 +321,7 @@ export class SessionManager {
 
     async removeAllowedGroup(groupJid: string) {
         this.allowedGroups = this.allowedGroups.filter(c => c.number !== groupJid);
+        this.onConversationRemoved?.();
         await this.saveConfig();
     }
 

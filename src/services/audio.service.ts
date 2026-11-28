@@ -1,7 +1,7 @@
 import { downloadContentFromMessage } from 'baileys';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { getFfmpegCommands } from './ffmpeg-path.js';
@@ -40,7 +40,7 @@ export class AudioService {
             const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
             const inputPath = join(mediaDir, `${filename}.ogg`);
             const wavPath = join(mediaDir, `${filename}.wav`);
-            await mkdir(mediaDir, { recursive: true });
+            await mkdir(mediaDir, { recursive: true, mode: 0o700 });
 
             const buffer = await this.measurePhase('download', async () => {
                 const stream = await downloadContentFromMessage(audioMessage, 'audio');
@@ -54,11 +54,12 @@ export class AudioService {
             });
 
             await this.measurePhase('write', async () => {
-                await writeFile(inputPath, buffer);
+                await writeFile(inputPath, buffer, { mode: 0o600 });
             });
 
             await this.measurePhase('convert', async () => {
                 await this.convertToWav(inputPath, wavPath);
+                if (process.platform !== 'win32') await chmod(wavPath, 0o600);
             });
 
             const whisperCppTranscriber = this.whisperCppTranscriber;

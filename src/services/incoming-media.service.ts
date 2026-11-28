@@ -87,8 +87,8 @@ export class IncomingMediaService {
             const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
             const absolutePath = join(mediaDir, fileName);
 
-            await mkdir(mediaDir, { recursive: true });
-            await writeFile(absolutePath, buffer);
+            await mkdir(mediaDir, { recursive: true, mode: 0o700 });
+            await writeFile(absolutePath, buffer, { mode: 0o600 });
             this.logger.log(`[WhatsApp-Pi] Video saved to ${absolutePath} (${buffer.length} bytes)`);
 
             return { text: `${fallbackText || t('incoming.media.video')}\n[Video saved: ${absolutePath}]` };
@@ -104,8 +104,8 @@ export class IncomingMediaService {
         const mediaDir = workspace ? join(workspace, 'media') : this.mediaDir;
         const absolutePath = join(mediaDir, fileName);
 
-        await mkdir(mediaDir, { recursive: true });
-        await writeFile(absolutePath, buffer);
+        await mkdir(mediaDir, { recursive: true, mode: 0o700 });
+        await writeFile(absolutePath, buffer, { mode: 0o600 });
         return absolutePath;
     }
 
@@ -192,8 +192,8 @@ export class IncomingMediaService {
         const documentDir = join(workspace ?? process.cwd(), '.pi-data', 'whatsapp', 'documents');
         const absolutePath = join(documentDir, savedFileName);
 
-        await mkdir(documentDir, { recursive: true });
-        await writeFile(absolutePath, buffer);
+        await mkdir(documentDir, { recursive: true, mode: 0o700 });
+        await writeFile(absolutePath, buffer, { mode: 0o600 });
 
         return `./.pi-data/whatsapp/documents/${savedFileName}`;
     }

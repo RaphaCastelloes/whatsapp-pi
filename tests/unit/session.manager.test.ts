@@ -1,5 +1,5 @@
 import { SessionManager } from '../../src/services/session.manager.ts';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -114,6 +114,21 @@ describe('SessionManager', () => {
 
         await sessionManager.removeAllowedGroup(groupJid);
         expect(sessionManager.isAllowedGroup(groupJid)).toBe(false);
+    });
+
+    it('notifies cancellation listeners after removing contact or group access', async () => {
+        const contact = '+1234567890';
+        const group = '120363012345@g.us';
+        await sessionManager.addNumber(contact);
+        await sessionManager.addAllowedGroup(group);
+        const removed = vi.fn();
+        sessionManager.setConversationRemovedCallback(removed);
+        await sessionManager.removeNumber(contact);
+        expect(removed).toHaveBeenCalledOnce();
+        expect(sessionManager.isConversationAllowed(contact)).toBe(false);
+        await sessionManager.removeAllowedGroup(group);
+        expect(removed).toHaveBeenCalledTimes(2);
+        expect(sessionManager.isConversationAllowed(group)).toBe(false);
     });
 
     it('should store and retrieve contact names', async () => {

@@ -137,6 +137,22 @@ describe('WhatsAppService reconnect behaviour', () => {
         expect(baileysMocks.makeWASocket).toHaveBeenCalledTimes(1);
     });
 
+    it('notifies session invalidation on account change and intentional disconnect', async () => {
+        const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');
+        const service = new WhatsAppService(createSessionManager() as any);
+        const invalidated = vi.fn();
+        service.setSessionInvalidatedCallback(invalidated);
+        await service.start();
+        const socket = baileysMocks.sockets[0];
+        socket.user = { id: '15550000001@s.whatsapp.net' };
+        service.getSessionContext();
+        socket.user = { id: '15550000002@s.whatsapp.net' };
+        service.getSessionContext();
+        expect(invalidated).toHaveBeenCalledTimes(1);
+        await service.stop();
+        expect(invalidated).toHaveBeenCalledTimes(2);
+    });
+
     it('stop() then start() re-enables auto-reconnect for the next drop', async () => {
         vi.useFakeTimers();
         const { WhatsAppService } = await import('../../src/services/whatsapp.service.ts');

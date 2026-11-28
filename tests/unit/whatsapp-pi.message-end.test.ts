@@ -124,6 +124,7 @@ vi.mock('../../src/services/isolated-session.service.ts', () => ({
                 return work({ workspace: 'test-workspace', session: { prompt: mocks.childPrompt, messages: [] } }, isCurrent);
             });
         }
+        secureStorage = vi.fn().mockResolvedValue(undefined);
         shutdown = vi.fn().mockResolvedValue(undefined);
     }
 }));
@@ -482,7 +483,7 @@ describe('whatsapp-pi routing hooks with synthetic owned turns', () => {
         expect(mocks.whatsappService.sendMessage).not.toHaveBeenCalled();
     });
 
-    it('does not inject slow media preparation after a session reset', async () => {
+    it('continues slow isolated media preparation after a main session reset', async () => {
         const { pi, ctx } = await setup();
         mocks.runQueuedJobs = true;
         let finish!: (value: { text: string }) => void;
@@ -492,8 +493,7 @@ describe('whatsapp-pi routing hooks with synthetic owned turns', () => {
         await vi.waitFor(() => expect(mocks.incomingMediaService.process).toHaveBeenCalled());
         await pi.handlers.get('session_before_switch')!({}, ctx);
         finish({ text: 'Late media' });
-        await vi.waitFor(() => expect(mocks.whatsappService.setMessageReaction).toHaveBeenCalledWith(incoming('slow').key, ''));
-        expect(mocks.childPrompt).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(mocks.childPrompt).toHaveBeenCalled());
         expect(pi.sendUserMessage).not.toHaveBeenCalled();
     });
 

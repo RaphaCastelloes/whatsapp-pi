@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     existsSync: vi.fn(),
     execFile: vi.fn(),
     homedir: vi.fn(),
+    chmod: vi.fn().mockResolvedValue(undefined),
     mkdir: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined)
 }));
@@ -28,6 +29,7 @@ vi.mock('node:os', () => ({
 }));
 
 vi.mock('node:fs/promises', () => ({
+    chmod: mocks.chmod,
     mkdir: mocks.mkdir,
     writeFile: mocks.writeFile
 }));
@@ -95,7 +97,7 @@ describe('AudioService', () => {
         const wavPath = join(mediaDir, 'audio_1234567890.wav');
 
         expect(mocks.downloadContentFromMessage).toHaveBeenCalledWith(audioMessage, 'audio');
-        expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]));
+        expect(mocks.writeFile).toHaveBeenCalledWith(inputPath, Buffer.concat([Buffer.from('part-1'), Buffer.from('part-2')]), { mode: 0o600 });
         expect(mocks.execFile).toHaveBeenCalledWith(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg', ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath], { windowsHide: true }, expect.any(Function));
         expect(whisperTranscriber.transcribe).toHaveBeenCalledWith(wavPath);
         expect(logger.log).toHaveBeenCalledWith('[WhatsApp-Pi] Audio download: 0 ms');

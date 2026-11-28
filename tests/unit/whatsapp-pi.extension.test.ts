@@ -73,6 +73,7 @@ const mocks = vi.hoisted(() => {
         incomingMediaService: createIncomingMediaService(),
         extractIncomingText: vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' }),
         childPrompt: vi.fn().mockResolvedValue(undefined),
+        changeModel: vi.fn().mockResolvedValue(undefined),
         reset() {
             this.sessionManager = createSessionManager();
             this.whatsappService = createWhatsAppService();
@@ -81,6 +82,7 @@ const mocks = vi.hoisted(() => {
             this.incomingMediaService = createIncomingMediaService();
             this.extractIncomingText = vi.fn().mockReturnValue({ kind: 'text', text: 'hello from whatsapp' });
             this.childPrompt = vi.fn().mockResolvedValue(undefined);
+            this.changeModel = vi.fn().mockResolvedValue(undefined);
         }
     };
 });
@@ -104,6 +106,8 @@ vi.mock('../../src/services/isolated-session.service.ts', () => ({
                 }, isCurrent);
             });
         }
+        secureStorage = vi.fn().mockResolvedValue(undefined);
+        changeModel = (...args: unknown[]) => mocks.changeModel(...args);
         shutdown = vi.fn().mockResolvedValue(undefined);
     }
 }));
@@ -210,12 +214,29 @@ describe('whatsapp-pi extension', () => {
         expect(pi.flags.has('whatsapp-pi-online')).toBe(true);
         expect(pi.flags.has('whatsapp-group')).toBe(true);
         expect(pi.commands.has('whatsapp')).toBe(true);
+        expect(pi.commands.has('whatsapp-model')).toBe(true);
         expect(pi.tools.has('send_wa_message')).toBe(true);
         expect(pi.tools.has('send_wa_media')).toBe(true);
         expect(pi.handlers.has('session_start')).toBe(true);
         expect(pi.handlers.has('agent_start')).toBe(true);
         expect(pi.handlers.has('message_end')).toBe(true);
         expect(pi.handlers.has('session_shutdown')).toBe(true);
+    });
+
+    it('changes the selected chat to the current Pi model', async () => {
+        const registerExtension = await loadExtension();
+        const pi = createMockPi();
+        registerExtension(pi as any);
+        mocks.sessionManager.getAllowList.mockReturnValue([{ number: '+15550000001', name: 'Ana' }]);
+        const model = { provider: 'openai', id: 'gpt-4o' };
+        const ctx = { ...createMockContext(), model, ui: { select: vi.fn().mockResolvedValue('+15550000001 (Ana)'), notify: vi.fn() } };
+        await pi.commands.get('whatsapp-model').handler('', ctx);
+        expect(mocks.changeModel).toHaveBeenCalledWith(
+            { accountScope: 'fixture-account', conversation: '+15550000001' },
+            expect.objectContaining({ model }),
+            expect.any(Function)
+        );
+        expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining('now uses openai/gpt-4o'), 'info');
     });
 
     it('sends explicit document metadata without putting attachment bytes in the tool result', async () => {

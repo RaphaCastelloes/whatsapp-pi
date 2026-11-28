@@ -149,6 +149,11 @@ export class WhatsAppService {
     private identityAuthDir = '';
     private sessionGeneration = 0;
     private onStatusUpdate?: (status: string) => void;
+    private onSessionInvalidated?: () => void;
+
+    public setSessionInvalidatedCallback(callback: () => void): void {
+        this.onSessionInvalidated = callback;
+    }
     private lastRemoteJid: string | null = null;
     private qrWasShown = false;
     private boundGroupJid: string | null = null;
@@ -913,6 +918,7 @@ export class WhatsAppService {
     private clearIdentityState(): void {
         this.historySync.interrupt();
         this.sessionGeneration++;
+        this.onSessionInvalidated?.();
         this.groupMetadataCache.clear();
         this.incomingLedger.clear();
         this.messageStore.pauseForAccountChange();
@@ -1229,6 +1235,7 @@ export class WhatsAppService {
         fileLog('[logout] Logging out - setting intentional stop');
         this.intentionalStop = true;
         this.sessionGeneration++;
+        this.onSessionInvalidated?.();
         await this.socket?.logout();
         this.cleanupSocket();
         this.isReconnecting = false;
@@ -1242,6 +1249,7 @@ export class WhatsAppService {
         fileLog('[stop] Stopping WhatsApp service - setting intentional stop');
         this.intentionalStop = true;
         this.sessionGeneration++;
+        this.onSessionInvalidated?.();
         try {
             await this.saveCreds?.();
         } catch (error) {

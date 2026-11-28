@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ModelRegistry, ModelRuntime, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { IsolatedSessionService, type IsolatedChat } from '../../src/services/isolated-session.service.ts';
 
 const roots: string[] = [];
@@ -49,6 +50,34 @@ const a: IsolatedChat = { accountScope: 'account-a', conversation: '15550000001@
 const b: IsolatedChat = { accountScope: 'account-a', conversation: '12000000000@g.us' };
 
 describe('isolated chat sessions', () => {
+    it.skipIf(process.platform === 'win32')('restricts existing storage without following symlinks and creates private session files', async () => {
+        const { root, create, ctx } = await fixture();
+        const service = create();
+        const legacyDir = join(root, 'isolated', 'legacy');
+        const legacyFile = join(legacyDir, 'message.txt');
+        const outside = join(root, 'outside.txt');
+        await mkdir(legacyDir, { recursive: true });
+        await writeFile(legacyFile, 'private');
+        await writeFile(outside, 'outside');
+        await chmod(legacyDir, 0o755);
+        await chmod(legacyFile, 0o644);
+        await chmod(outside, 0o644);
+        await symlink(outside, join(legacyDir, 'link'));
+        try {
+            await service.secureStorage();
+            expect((await stat(legacyDir)).mode & 0o777).toBe(0o700);
+            expect((await stat(legacyFile)).mode & 0o777).toBe(0o600);
+            expect((await stat(outside)).mode & 0o777).toBe(0o644);
+            await service.enqueue(a, ctx, async () => {});
+            const sessionDir = join(service.workspace(a), '..', 'session');
+            expect((await stat(sessionDir)).mode & 0o777).toBe(0o700);
+            expect((await stat(join(sessionDir, 'session.jsonl'))).mode & 0o777).toBe(0o600);
+            expect((await stat(join(sessionDir, 'metadata.json'))).mode & 0o777).toBe(0o600);
+        } finally {
+            await service.shutdown();
+        }
+    }, 30000);
+
     it('uses a model provider registered in the main Pi runtime', async () => {
         const { create, ctx, models } = await fixture();
         models.registerProvider('fixture-provider', {
@@ -135,6 +164,46 @@ describe('isolated chat sessions', () => {
         }
     }, 30000);
 
+    it('changes an unavailable saved model without losing history and persists the replacement', async () => {
+        const { create, ctx } = await fixture();
+        const first = create();
+        await first.enqueue(a, ctx, async ({ session }) => {
+            offline(session, []);
+            await session.prompt('original history');
+        });
+        await first.shutdown();
+        const replacement = ctx.modelRegistry.find('openai', 'gpt-4o');
+        expect(replacement).toBeDefined();
+        const find = ctx.modelRegistry.find.bind(ctx.modelRegistry);
+        const unavailable = vi.spyOn(ctx.modelRegistry, 'find').mockImplementation((provider, id) =>
+            id === 'gpt-4o-mini' ? undefined : find(provider, id));
+        const second = create();
+        const seen: string[][] = [];
+        try {
+            await expect(second.enqueue(a, ctx, async () => {})).rejects.toThrow('/whatsapp-model');
+            await second.changeModel(a, { ...ctx, model: replacement });
+            await second.enqueue(a, ctx, async ({ session }) => {
+                expect(session.model?.id).toBe('gpt-4o');
+                offline(session, seen);
+                await session.prompt('new model');
+            });
+        } finally {
+            await second.shutdown();
+            unavailable.mockRestore();
+        }
+        const third = create();
+        try {
+            await third.enqueue(a, ctx, async ({ session }) => {
+                expect(session.model?.id).toBe('gpt-4o');
+                offline(session, seen);
+                await session.prompt('after restart');
+            });
+            expect(seen).toEqual([['original history', 'new model'], ['original history', 'new model', 'after restart']]);
+        } finally {
+            await third.shutdown();
+        }
+    }, 30000);
+
     it('serializes work within a chat without blocking a different chat', async () => {
         const { create, ctx } = await fixture();
         const service = create();
@@ -152,6 +221,95 @@ describe('isolated chat sessions', () => {
             release();
             await Promise.all([one, two]);
             expect(order).toEqual(['a1', 'b', 'a2']);
+        } finally {
+            release();
+            await service.shutdown();
+        }
+    }, 30000);
+
+    it('aborts an invalidated active session and permanently cancels its queued work', async () => {
+        const { create, ctx } = await fixture();
+        const service = create();
+        let allowed = true;
+        let entered!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const wait = new Promise<void>(resolve => { release = resolve; });
+        let abort: ReturnType<typeof vi.spyOn> | undefined;
+        let ranQueued = false;
+        try {
+            const first = service.enqueue(a, ctx, async ({ session }, isLive) => {
+                abort = vi.spyOn(session, 'abort');
+                entered();
+                await wait;
+                expect(isLive()).toBe(false);
+            }, () => allowed);
+            await started;
+            const second = service.enqueue(a, ctx, async () => { ranQueued = true; }, () => allowed);
+            const rejection = expect(second).rejects.toThrow('no longer current');
+            allowed = false;
+            service.cancelInvalid();
+            expect(abort).toHaveBeenCalledOnce();
+            allowed = true;
+            release();
+            await first;
+            await rejection;
+            expect(ranQueued).toBe(false);
+        } finally {
+            release();
+            await service.shutdown();
+        }
+    }, 30000);
+
+    it('propagates cancellation to a running agent tool', async () => {
+        const { root, ctx } = await fixture();
+        let entered!: () => void;
+        let release!: () => void;
+        let toolSignal: AbortSignal | undefined;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const wait = new Promise<void>(resolve => { release = resolve; });
+        const service = new IsolatedSessionService(() => [{
+            name: 'held_tool',
+            label: 'Held tool',
+            description: 'Wait for cancellation',
+            parameters: Type.Object({}),
+            execute: async (_id, _params, signal) => {
+                toolSignal = signal;
+                signal?.addEventListener('abort', release, { once: true });
+                entered();
+                await wait;
+                return { content: [{ type: 'text' as const, text: 'stopped' }], details: undefined };
+            }
+        }], () => () => {}, join(root, 'isolated'), root);
+        let allowed = true;
+        try {
+            const request = service.enqueue(a, ctx, async ({ session }) => {
+                let calls = 0;
+                session.agent.streamFunction = model => {
+                    const stream = createAssistantMessageEventStream();
+                    const first = calls++ === 0;
+                    const message: AssistantMessage = {
+                        role: 'assistant', api: model.api, provider: model.provider, model: model.id,
+                        content: first ? [{ type: 'toolCall', id: 'held', name: 'held_tool', arguments: {} }]
+                            : [{ type: 'text', text: 'finished' }],
+                        timestamp: Date.now(), stopReason: first ? 'toolUse' : 'stop',
+                        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+                            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+                    };
+                    queueMicrotask(() => {
+                        stream.push({ type: 'start', partial: message });
+                        stream.push({ type: 'done', reason: first ? 'toolUse' : 'stop', message });
+                        stream.end();
+                    });
+                    return stream;
+                };
+                await session.prompt('run tool');
+            }, () => allowed);
+            await Promise.race([started, request.then(() => { throw new Error('Tool did not start'); })]);
+            allowed = false;
+            service.cancelInvalid();
+            await request;
+            expect(toolSignal?.aborted).toBe(true);
         } finally {
             release();
             await service.shutdown();

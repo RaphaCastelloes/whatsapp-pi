@@ -179,6 +179,8 @@ describe('WhatsApp isolated routing', () => {
             await vi.waitFor(() => expect(mocks.seen.length).toBe(5));
             await mocks.callback!(message(a, 'e', 'hold-one'));
             await vi.waitFor(() => expect(releaseHeld).toBeDefined());
+            await main.handlers.get('session_before_switch')!({}, main.ctx);
+            await main.handlers.get('session_start')!({}, main.ctx);
             await mocks.callback!(message(b, 'f', 'concurrent'));
             await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(b, 'reply 7', true));
             releaseHeld!();

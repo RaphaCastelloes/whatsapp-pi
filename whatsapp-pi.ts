@@ -15,7 +15,7 @@ import { ConversationRouter, type RoutedContent, type RoutingSnapshot } from './
 import type { WAMessageKey } from 'baileys';
 import type { MessageResult, QuoteTarget, TextSendOptions, WhatsAppSessionContext } from './src/models/whatsapp.types.js';
 import { OutgoingMediaService } from './src/services/outgoing-media.service.js';
-import { IsolatedSessionService, type IsolatedChat } from './src/services/isolated-session.service.js';
+import { IsolatedSessionService, type IsolatedChat, type IsolatedSessionContext } from './src/services/isolated-session.service.js';
 
 const shutdownState = globalThis as typeof globalThis & {
     __whatsappPiShutdown?: {
@@ -61,6 +61,11 @@ export default function (pi: ExtensionAPI) {
     const incomingMediaService = new IncomingMediaService(audioService, logger);
     const menuHandler = new MenuHandler(whatsappService, sessionManager, recentsService);
     let _ctx: ExtensionContext | undefined;
+    let lastSessionContext: IsolatedSessionContext | undefined;
+    let initialized = false;
+    const snapshotSessionContext = (ctx: ExtensionContext): IsolatedSessionContext => ({
+        model: ctx.model, modelRegistry: ctx.modelRegistry, thinkingLevel: ctx.thinkingLevel
+    });
     const canonicalConversation = (jid: string) => whatsappService.canonicalConversation(jid);
     const routingScope = () => {
         const context = whatsappService.getSessionContext();
@@ -128,11 +133,14 @@ export default function (pi: ExtensionAPI) {
             installRoutingHooks(childPi, childRouter);
         }
     );
+    sessionManager.setConversationRemovedCallback?.(() => isolatedSessions.cancelInvalid());
+    whatsappService.setSessionInvalidatedCallback?.(() => isolatedSessions.cancelAll());
 
     pi.on('input', event => { router.observeInput(event); });
     pi.on('session_before_switch', async () => {
         router.reset();
-        await clearProcessingReactions();
+        const entries = [...processingReactions].filter(([, reaction]) => reaction.router === router);
+        await Promise.all(entries.map(([id, reaction]) => clearProcessingReaction(id, reaction)));
     });
 
     const trackOwnedSend = async (jid: string, snapshot: RoutingSnapshot | undefined, send: () => Promise<MessageResult>): Promise<MessageResult> => {
@@ -206,6 +214,17 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_start", async (_event, ctx) => {
         router.reset();
         _ctx = ctx;
+        lastSessionContext = snapshotSessionContext(ctx);
+        if (initialized) {
+            refreshFooterStatus();
+            return;
+        }
+        try {
+            await isolatedSessions.secureStorage();
+        } catch (error) {
+            logger.error('[WhatsApp-Pi] Failed to protect isolated storage:', error);
+            ctx.ui.notify('WhatsApp: failed to protect isolated storage; background requests may fail.', 'error');
+        }
         // Check verbose mode
         const isVerboseFlagSet = process.argv.includes("--verbose");
 
@@ -219,7 +238,7 @@ export default function (pi: ExtensionAPI) {
         }
         ctx.ui.setStatus('whatsapp', '| WhatsApp: Disconnected');
         whatsappService.setStatusCallback((status) => {
-            ctx.ui.setStatus('whatsapp', formatFooterStatus(status));
+            _ctx?.ui.setStatus('whatsapp', formatFooterStatus(status));
         });
 
         // Set up group binding if configured
@@ -321,6 +340,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         ctx.ui.notify('WhatsApp: Session reset via /new is now fully supported.', 'info');
+        initialized = true;
     });
 
     const toRecentSenderNumber = (recipientJid: string): string => {
@@ -365,9 +385,14 @@ export default function (pi: ExtensionAPI) {
             throw new Error('Cannot determine the WhatsApp account, isolated chat, or Pi context');
         }
         const chat: IsolatedChat = { accountScope: msg.sessionContext.accountScope, conversation: canonical };
-        const runtimeId = router.getRuntimeId();
-        const isCurrent = () => runtimeId === router.getRuntimeId()
-            && whatsappService.isSessionContextCurrent(msg.sessionContext)
+        let sessionContext = lastSessionContext;
+        try {
+            sessionContext = lastSessionContext = snapshotSessionContext(ctx);
+        } catch {
+            // Reuse the last model registry while the main TUI session is switching.
+        }
+        if (!sessionContext) throw new Error('Cannot determine the Pi model context');
+        const isCurrent = () => whatsappService.isSessionContextCurrent(msg.sessionContext)
             && sessionManager.isConversationAllowed(msg.senderNumber)
             && canonicalConversation(remoteJid) === canonical;
         const isGroup = remoteJid?.endsWith('@g.us') || false;
@@ -399,7 +424,7 @@ export default function (pi: ExtensionAPI) {
             if (id && reaction) await clearProcessingReaction(id, reaction);
             return;
         }
-        const task = isolatedSessions.enqueue(chat, ctx, async ({ session, workspace }, isLive) => {
+        const task = isolatedSessions.enqueue(chat, sessionContext, async ({ session, workspace }, isLive) => {
             const childRouter = isolatedRouters.get(chatKey(chat));
             if (!childRouter) throw new Error('Isolated session router is unavailable');
             await activeRun.run({ router: childRouter, isCurrent: isLive }, async () => {
@@ -433,7 +458,11 @@ export default function (pi: ExtensionAPI) {
         void task.catch(error => {
             if (isCurrent()) whatsappService.markIncomingProcessing(msg.key, 'failed');
             logger.error('[WhatsApp-Pi] Isolated session failed:', error);
-            ctx.ui.notify('WhatsApp: isolated session failed; the message was not sent to the main session.', 'error');
+            try {
+                _ctx?.ui.notify('WhatsApp: isolated session failed; the message was not sent to the main session.', 'error');
+            } catch {
+                // The TUI context may be unavailable while switching sessions.
+            }
         }).finally(async () => {
             if (id && reaction && !reaction.consumed) await clearProcessingReaction(id, reaction);
         }).catch(error => logger.error('[WhatsApp-Pi] Failed to clear isolated request:', error));
@@ -772,6 +801,44 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
+    pi.registerCommand("whatsapp-model", {
+        description: "Use the current Pi model for an existing WhatsApp chat",
+        handler: async (_args, ctx) => {
+            const model = ctx.model;
+            if (!model || !whatsappService.hasAccountIdentity()) {
+                ctx.ui.notify('WhatsApp: connect an account and select a Pi model first.', 'error');
+                return;
+            }
+            const account = whatsappService.getSessionContext();
+            const contacts = [...sessionManager.getAllowList(), ...sessionManager.getAllowedGroups()];
+            if (!contacts.length) {
+                ctx.ui.notify('WhatsApp: no allowed chats are available.', 'warning');
+                return;
+            }
+            const labels = contacts.map(contact => contact.name ? `${contact.number} (${contact.name})` : contact.number);
+            const choice = await ctx.ui.select(`Use ${model.provider}/${model.id} for which chat?`, labels);
+            const index = labels.indexOf(choice ?? '');
+            if (index < 0) return;
+            const number = contacts[index].number;
+            const conversation = canonicalConversation(number);
+            const isCurrent = () => whatsappService.isSessionContextCurrent(account)
+                && sessionManager.isConversationAllowed(number)
+                && canonicalConversation(number) === conversation;
+            if (!conversation || !isCurrent()) {
+                ctx.ui.notify('WhatsApp: the selected chat or account is no longer available.', 'error');
+                return;
+            }
+            try {
+                await isolatedSessions.changeModel({ accountScope: account.accountScope, conversation }, {
+                    model, modelRegistry: ctx.modelRegistry, thinkingLevel: ctx.thinkingLevel
+                }, isCurrent);
+                ctx.ui.notify(`WhatsApp: ${number} now uses ${model.provider}/${model.id}.`, 'info');
+            } catch (error) {
+                ctx.ui.notify(`WhatsApp: could not change chat model: ${error instanceof Error ? error.message : String(error)}`, 'error');
+            }
+        }
+    });
+
     function installRoutingHooks(api: ExtensionAPI, runRouter: ConversationRouter) {
         if (api !== pi) api.on('input', event => { runRouter.observeInput(event); });
         api.on('agent_start', () => { runRouter.startRun(); });
@@ -810,6 +877,7 @@ export default function (pi: ExtensionAPI) {
             const mirror = runRouter.mirror();
             if (!mirror?.snapshot.target) return;
             const target = mirror.snapshot.target;
+            let success = false;
             try {
                 const result = await sendWithOwnership(target, mirror.text, mirror.snapshot);
                 if (result.success) {
@@ -818,10 +886,15 @@ export default function (pi: ExtensionAPI) {
                         senderNumber: toRecentSenderNumber(target), text: mirror.text,
                         direction: 'outgoing', timestamp: Date.now()
                     });
-                    (_ctx ?? ctx).ui.notify(t('notify.replySent'), 'info');
-                } else (_ctx ?? ctx).ui.notify(t('notify.replyFailed'), 'error');
+                    success = true;
+                }
             } catch {
-                (_ctx ?? ctx).ui.notify(t('notify.replyFailed'), 'error');
+                // Report the failure if a TUI context is still available.
+            }
+            try {
+                (_ctx ?? ctx).ui.notify(success ? t('notify.replySent') : t('notify.replyFailed'), success ? 'info' : 'error');
+            } catch {
+                // A main-session switch can temporarily invalidate the TUI context.
             }
         });
         api.on('agent_end', async event => {

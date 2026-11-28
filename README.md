@@ -88,9 +88,15 @@ Each allowed contact or group gets a separate background Pi session and working 
 
 Sessions and workspaces are stored under `~/.pi/agent/extensions/whatsapp-pi/isolated/`, using account- and conversation-specific directory names. Incoming media for these sessions is organized under their workspace. If a saved session cannot be recovered, its request fails rather than falling back to the main TUI session.
 
+Each chat initially uses the Pi model selected when its session starts. To change an existing chat's model, connect WhatsApp, select the desired model in Pi, then run `/whatsapp-model` and choose an allowed chat. Its history is retained. Use the same command if its saved model is no longer available.
+
+Switching the main Pi session does not interrupt background chats. Removing a chat from the allow list, changing accounts, disconnecting WhatsApp, or shutting down cancels its active and queued work. Cancellation cannot undo effects that have already occurred.
+
+On POSIX systems the isolated storage directory is owner-only, existing isolated files are restricted on startup, and new session and incoming media files use owner-only permissions. Existing executable files retain their owner execute bit. Symbolic links are not followed during permission migration. On Windows, restrict the isolated directory using Windows ACLs; Node's POSIX mode settings do not provide equivalent protection.
+
 This is **conversation-context isolation, not a security or privacy sandbox**. Sessions may still access the same filesystem, credentials, network, and WhatsApp history. Background sessions load Pi's built-in tools and the WhatsApp tools, but do not automatically load other extensions or their input policies. Allow only trusted chats.
 
-Incoming prompts include an opaque request marker. It identifies an exact extension-submitted input in a bounded, memory-only registry; it is not a routing command. Pi's normal user-input policies still run. Ownership activates only when matching content is consumed, not when a chat message arrives.
+Incoming prompts include an opaque request marker. It identifies an exact extension-submitted input in a bounded, memory-only registry; it is not a routing command. Ownership activates only when matching content is consumed, not when a chat message arrives.
 
 Automatic replies wait until tool results are available. They never reuse a stale WhatsApp destination for terminal-only work. Combined inputs from different chats, unknown input, or policy/runtime-transformed content (including changed image bytes) fail closed: an agent must use an explicit known recipient rather than guess. Verified PN/LID aliases do not replace the original transport address of a reply.
 

@@ -74,7 +74,7 @@ describe('IncomingMediaService', () => {
         expect(audioService.transcribe).toHaveBeenCalledWith(audioMessage, workspace);
 
         await service.process({ kind: 'image', text: '', imageMessage: { mimetype: 'image/jpeg' } }, 'Ana', workspace);
-        expect(mocks.writeFile).toHaveBeenCalledWith(join(workspace, 'media', 'image_1234567890.jpeg'), Buffer.from('media'));
+        expect(mocks.writeFile).toHaveBeenCalledWith(join(workspace, 'media', 'image_1234567890.jpeg'), Buffer.from('media'), { mode: 0o600 });
 
         const video = await service.process({ kind: 'video', text: '', videoMessage: { mimetype: 'video/mp4' } }, 'Ana', workspace);
         expect(video.text).toContain(join(workspace, 'media', 'video_1234567890.mp4'));
@@ -83,7 +83,7 @@ describe('IncomingMediaService', () => {
             kind: 'document', text: '', documentMessage: { fileName: 'notes.txt', mimetype: 'text/plain' }
         }, 'Ana', workspace);
         expect(mocks.writeFile).toHaveBeenCalledWith(
-            join(workspace, '.pi-data', 'whatsapp', 'documents', '1234567890_notes.txt'), Buffer.from('media')
+            join(workspace, '.pi-data', 'whatsapp', 'documents', '1234567890_notes.txt'), Buffer.from('media'), { mode: 0o600 }
         );
         expect(document.text).toContain('./.pi-data/whatsapp/documents/1234567890_notes.txt');
     });
@@ -123,11 +123,11 @@ describe('IncomingMediaService', () => {
         );
         expect(mocks.mkdir).toHaveBeenCalledWith(
             expect.stringContaining('whatsapp-medias'),
-            { recursive: true }
+            { recursive: true, mode: 0o700 }
         );
         expect(mocks.writeFile).toHaveBeenCalledWith(
             expect.stringMatching(/whatsapp-medias[\\/]video_1234567890\.mp4$/),
-            Buffer.from('media')
+            Buffer.from('media'), { mode: 0o600 }
         );
         expect(result.text).toContain('[Video saved:');
     });
@@ -167,11 +167,11 @@ describe('IncomingMediaService', () => {
         );
         expect(mocks.mkdir).toHaveBeenCalledWith(
             expect.stringMatching(/\.pi-data[/\\]whatsapp[/\\]documents/),
-            { recursive: true }
+            { recursive: true, mode: 0o700 }
         );
         expect(mocks.writeFile).toHaveBeenCalledWith(
             expect.stringContaining('1234567890_contract.pdf'),
-            Buffer.from('media')
+            Buffer.from('media'), { mode: 0o600 }
         );
         expect(mocks.pdfParse).toHaveBeenCalledWith(Buffer.from('media'));
         expect(result.text).toContain('[Document Received: contract.pdf]');
